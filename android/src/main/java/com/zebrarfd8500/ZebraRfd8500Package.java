@@ -1,4 +1,4 @@
-package zebrarfd8500;
+package com.zebrarfd8500;
 
 import java.util.Arrays;
 import java.util.Collections;

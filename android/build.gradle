@@ -48,7 +48,7 @@ android {
         minSdkVersion safeExtGet('minSdkVersion', DEFAULT_MIN_SDK_VERSION)
         targetSdkVersion safeExtGet('targetSdkVersion', DEFAULT_TARGET_SDK_VERSION)
         versionCode 1
-        versionName "1.0"
+        versionName "1.0.0"
     }
     lintOptions {
         abortOnError false
@@ -71,6 +71,7 @@ repositories {
 }
 
 dependencies {
+    implementation fileTree(dir: "libs", include: ["*.aar"])
     //noinspection GradleDynamicVersion
     implementation 'com.facebook.react:react-native:+'  // From node_modules
 }
@@ -82,7 +83,7 @@ def configureReactNativePom(def pom) {
         name packageJson.title
         artifactId packageJson.name
         version = packageJson.version
-        group = "zebrarfd8500"
+        group = "com.zebrarfd8500"
         description packageJson.description
         url packageJson.repository.baseUrl
 

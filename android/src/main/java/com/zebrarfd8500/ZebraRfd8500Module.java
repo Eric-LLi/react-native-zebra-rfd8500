@@ -1,4 +1,4 @@
-package zebrarfd8500;
+package com.zebrarfd8500;
 
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
