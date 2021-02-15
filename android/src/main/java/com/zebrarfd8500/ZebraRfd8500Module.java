@@ -25,8 +25,11 @@ import com.zebra.rfid.api3.InvalidUsageException;
 import com.zebra.rfid.api3.MEMORY_BANK;
 import com.zebra.rfid.api3.OperationFailureException;
 import com.zebra.rfid.api3.RFIDReader;
+import com.zebra.rfid.api3.RFIDResults;
 import com.zebra.rfid.api3.ReaderDevice;
 import com.zebra.rfid.api3.Readers;
+import com.zebra.rfid.api3.RegionInfo;
+import com.zebra.rfid.api3.RegulatoryConfig;
 import com.zebra.rfid.api3.RfidEventsListener;
 import com.zebra.rfid.api3.RfidReadEvents;
 import com.zebra.rfid.api3.RfidStatusEvents;
@@ -35,6 +38,7 @@ import com.zebra.rfid.api3.SL_FLAG;
 import com.zebra.rfid.api3.START_TRIGGER_TYPE;
 import com.zebra.rfid.api3.STATUS_EVENT_TYPE;
 import com.zebra.rfid.api3.STOP_TRIGGER_TYPE;
+import com.zebra.rfid.api3.SupportedRegions;
 import com.zebra.rfid.api3.TagAccess;
 import com.zebra.rfid.api3.TagData;
 import com.zebra.rfid.api3.TriggerInfo;
@@ -124,19 +128,19 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 					if (myTag.getMemoryBankData().length() > 0) {
 						Log.d(LOG, " Mem Bank Data " + myTag.getMemoryBankData());
 					}
+				}
 
-					int rssi = myTag.getPeakRSSI();
-					String EPC = myTag.getTagID();
-					Log.i("RFID", "Tag ID = " + EPC);
+				int rssi = myTag.getPeakRSSI();
+				String EPC = myTag.getTagID();
+				Log.i("RFID", "Tag ID = " + EPC);
 
-					if (isSingleRead) {
-						if (rssi > -40) {
-							sendEvent(TAG, EPC);
-						}
-					} else {
-						if (addTagToList(EPC)) {
-							sendEvent(TAG, EPC);
-						}
+				if (isSingleRead) {
+					if (rssi > -40) {
+						sendEvent(TAG, EPC);
+					}
+				} else {
+					if (addTagToList(EPC)) {
+						sendEvent(TAG, EPC);
 					}
 				}
 
@@ -258,7 +262,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 				WritableMap map = Arguments.createMap();
 				map.putString("name", readerDevice.getName());
 				map.putString("mac", readerDevice.getAddress());
-				map.putInt("power", power);
+				map.putInt("power", power / 10);
 
 				promise.resolve(map);
 			} catch (InvalidUsageException e) {
@@ -311,34 +315,40 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 	public void programTag(String oldTag, String newTag, Promise promise) {
 		if (reader != null && reader.isConnected()) {
 			if (oldTag != null && newTag != null) {
-				TagAccess tagAccess = new TagAccess();
-				final TagAccess.WriteAccessParams writeAccessParams = tagAccess.new WriteAccessParams();
-
-				writeAccessParams.setAccessPassword(Long.decode("0X" + "0"));
-				writeAccessParams.setMemoryBank(MEMORY_BANK.MEMORY_BANK_EPC);
-				writeAccessParams.setOffset(2);
-				writeAccessParams.setWriteData(newTag);
-				writeAccessParams.setWriteDataLength(newTag.length() / 4);
-
-				String error = null;
 				try {
-					reader.Actions.TagAccess.writeWait(oldTag, writeAccessParams, null, null);
-				} catch (InvalidUsageException e) {
+					reader.Config.setDPOState(DYNAMIC_POWER_OPTIMIZATION.DISABLE);
+
+					TagAccess tagAccess = new TagAccess();
+					final TagAccess.WriteAccessParams writeAccessParams = tagAccess.new WriteAccessParams();
+
+					writeAccessParams.setAccessPassword(Long.decode("0X" + "0"));
+					writeAccessParams.setMemoryBank(MEMORY_BANK.MEMORY_BANK_EPC);
+					writeAccessParams.setOffset(2);
+					writeAccessParams.setWriteData(newTag);
+					writeAccessParams.setWriteDataLength(newTag.length() / 4);
+
+					String error = null;
+					try {
+						reader.Actions.TagAccess.writeWait(oldTag, writeAccessParams, null, null);
+					} catch (InvalidUsageException e) {
+						e.printStackTrace();
+						error = e.getInfo();
+					} catch (OperationFailureException e) {
+						e.printStackTrace();
+						error = e.getVendorMessage();
+					} catch (Exception e) {
+						error = e.getMessage();
+					}
+
+					WritableMap map = Arguments.createMap();
+					map.putBoolean("status", error != null);
+					map.putString("error", error);
+					sendEvent(WRITE_TAG_STATUS, map);
+
+					promise.resolve(true);
+				} catch (InvalidUsageException | OperationFailureException e) {
 					e.printStackTrace();
-					error = e.getInfo();
-				} catch (OperationFailureException e) {
-					e.printStackTrace();
-					error = e.getVendorMessage();
-				} catch (Exception e) {
-					error = e.getMessage();
 				}
-
-				WritableMap map = Arguments.createMap();
-				map.putBoolean("status", error != null);
-				map.putString("error", error);
-				sendEvent(WRITE_TAG_STATUS, map);
-
-				promise.resolve(true);
 			}
 		}
 
@@ -347,10 +357,8 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
 	@ReactMethod
 	public void setEnabled(boolean enable, Promise promise) {
-		if (enable) {
-			reader.Events.setTagReadEvent(true);
-		} else {
-			reader.Events.setTagReadEvent(false);
+		if (reader != null && reader.isConnected()) {
+			reader.Events.setTagReadEvent(enable);
 		}
 
 		promise.resolve(true);
@@ -390,7 +398,26 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 				e.printStackTrace();
 			} catch (OperationFailureException e) {
 				e.printStackTrace();
-				return e.getResults().toString();
+				if (e.getResults() == RFIDResults.RFID_READER_REGION_NOT_CONFIGURED) {
+					try {
+						RegulatoryConfig regulatoryConfig = reader.Config.getRegulatoryConfig();
+
+						SupportedRegions regions = reader.ReaderCapabilities.SupportedRegions;
+						int len = regions.length();
+						for (int i = 0; i < len; i++) {
+							RegionInfo regionInfo = regions.getRegionInfo(i);
+							if ("AUS".equals(regionInfo.getRegionCode())) {
+								regulatoryConfig.setRegion(regionInfo.getRegionCode());
+								reader.Config.setRegulatoryConfig(regulatoryConfig);
+								Log.i("RFID", "Region set to " + regionInfo.getName());
+							}
+						}
+					} catch (InvalidUsageException | OperationFailureException invalidUsageException) {
+						invalidUsageException.printStackTrace();
+					}
+				} else {
+					return e.getResults().toString();
+				}
 			} catch (Exception e) {
 				e.printStackTrace();
 				return e.getMessage();
@@ -403,7 +430,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 	private void doDisconnect() {
 		Log.d(LOG, "disconnect " + reader);
 
-		if (reader != null) {
+		if (reader != null && reader.isConnected()) {
 			try {
 				reader.Events.removeEventsListener(this);
 
@@ -417,7 +444,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 	private void ConfigureReader() throws Exception {
 		Log.d("ConfigureReader", "ConfigureReader " + reader.getHostName());
 		if (reader.isConnected()) {
-			reader.Config.resetFactoryDefaults();
+//			reader.Config.resetFactoryDefaults();
 
 			TriggerInfo triggerInfo = new TriggerInfo();
 			triggerInfo.StartTrigger.setTriggerType(START_TRIGGER_TYPE.START_TRIGGER_TYPE_IMMEDIATE);
@@ -477,9 +504,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 		if (reader != null && reader.isConnected()) {
 			try {
 				reader.Actions.Inventory.perform();
-			} catch (InvalidUsageException e) {
-				e.printStackTrace();
-			} catch (OperationFailureException e) {
+			} catch (InvalidUsageException | OperationFailureException e) {
 				e.printStackTrace();
 			}
 		}
@@ -489,9 +514,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 		if (reader != null && reader.isConnected()) {
 			try {
 				reader.Actions.Inventory.stop();
-			} catch (InvalidUsageException e) {
-				e.printStackTrace();
-			} catch (OperationFailureException e) {
+			} catch (InvalidUsageException | OperationFailureException e) {
 				e.printStackTrace();
 			}
 		}
