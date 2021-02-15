@@ -17,6 +17,7 @@ export type DevicesTypes = {
 
 export type ReaderStatus = {
 	status: boolean;
+	error: string
 };
 
 export type ProgramStatus = {
@@ -42,11 +43,11 @@ export declare function off(event: READER_EVENTS): void;
 
 export declare function connect(mac: string): Promise<boolean>;
 
-export declare function disconnect(): Promise<boolean>;
+export declare function disconnect(): Promise<void>;
 
 export declare function isConnected(): Promise<boolean>;
 
-export declare function clear(): Promise<void>;
+export declare function clear(): void;
 
 export declare function getDevices(): Promise<Array<DevicesTypes>>;
 
@@ -60,6 +61,6 @@ export declare function locateTag(tag: string): Promise<void>;
 
 export declare function setEnabled(enable: boolean): Promise<void>;
 
-export declare function setSingleRead(enable: boolean): Promise<void>;
+export declare function setSingleRead(enable: boolean): void;
 
 export declare function enableLocateTag(enable: boolean, tag?: string): Promise<void>;
