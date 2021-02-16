@@ -21,6 +21,7 @@ Pod::Spec.new do |s|
   s.source_files = "ios/**/*.{h,c,m,swift}"
   s.requires_arc = true
   s.ios.vendored_library = 'ios/symbolrfid-sdk/libZebraSdk.a'
+  s.ios.framework = 'ExternalAccessory', 'CoreBluetooth'
   s.dependency "React"
   # ...
   # s.dependency "..."

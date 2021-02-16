@@ -6,6 +6,12 @@
 	objectVersion = 46;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		079CAC5A25DBF25E008F9825 /* CoreBluetooth.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 079CAC5925DBF25E008F9825 /* CoreBluetooth.framework */; };
+		079CAC5C25DBF269008F9825 /* ExternalAccessory.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 079CAC5B25DBF269008F9825 /* ExternalAccessory.framework */; };
+		079CAC5E25DBF284008F9825 /* libsymbolrfid-sdk.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 079CAC5D25DBF284008F9825 /* libsymbolrfid-sdk.a */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXCopyFilesBuildPhase section */
 		58B511D91A9E6C8500147676 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
@@ -19,6 +25,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		079CAC5925DBF25E008F9825 /* CoreBluetooth.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreBluetooth.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk/System/Library/Frameworks/CoreBluetooth.framework; sourceTree = DEVELOPER_DIR; };
+		079CAC5B25DBF269008F9825 /* ExternalAccessory.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ExternalAccessory.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk/System/Library/Frameworks/ExternalAccessory.framework; sourceTree = DEVELOPER_DIR; };
+		079CAC5D25DBF284008F9825 /* libsymbolrfid-sdk.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = "libsymbolrfid-sdk.a"; path = "symbolrfid-sdk/libsymbolrfid-sdk.a"; sourceTree = "<group>"; };
 		134814201AA4EA6300B7C361 /* libZebraRfd8500.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libZebraRfd8500.a; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -27,12 +36,25 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				079CAC5E25DBF284008F9825 /* libsymbolrfid-sdk.a in Frameworks */,
+				079CAC5C25DBF269008F9825 /* ExternalAccessory.framework in Frameworks */,
+				079CAC5A25DBF25E008F9825 /* CoreBluetooth.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		079CAC5825DBF25E008F9825 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				079CAC5D25DBF284008F9825 /* libsymbolrfid-sdk.a */,
+				079CAC5B25DBF269008F9825 /* ExternalAccessory.framework */,
+				079CAC5925DBF25E008F9825 /* CoreBluetooth.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		134814211AA4EA7D00B7C361 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -45,6 +67,7 @@
 			isa = PBXGroup;
 			children = (
 				134814211AA4EA7D00B7C361 /* Products */,
+				079CAC5825DBF25E008F9825 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -167,6 +190,7 @@
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/symbolrfid-sdk/include/";
 			};
 			name = Debug;
 		};
@@ -218,6 +242,7 @@
 				);
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
+				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/symbolrfid-sdk/include/";
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
@@ -231,7 +256,10 @@
 					"$(SRCROOT)/../../../React/**",
 					"$(SRCROOT)/../../react-native/React/**",
 				);
-				LIBRARY_SEARCH_PATHS = "$(inherited)";
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/symbolrfid-sdk",
+				);
 				OTHER_LDFLAGS = "-ObjC";
 				PRODUCT_NAME = ZebraRfd8500;
 				SKIP_INSTALL = YES;
@@ -247,7 +275,10 @@
 					"$(SRCROOT)/../../../React/**",
 					"$(SRCROOT)/../../react-native/React/**",
 				);
-				LIBRARY_SEARCH_PATHS = "$(inherited)";
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/symbolrfid-sdk",
+				);
 				OTHER_LDFLAGS = "-ObjC";
 				PRODUCT_NAME = ZebraRfd8500;
 				SKIP_INSTALL = YES;
