@@ -9,8 +9,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/github_account/react-native-zebra-rfd8500.git",
-    "baseUrl": "https://github.com/github_account/react-native-zebra-rfd8500"
+    "url": "git+https://github.com/Eric-LLi/react-native-zebra-rfd8500.git",
+    "baseUrl": "https://github.com/Eric-LLi/react-native-zebra-rfd8500"
   },
   "keywords": [
     "react-native"
