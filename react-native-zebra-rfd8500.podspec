@@ -20,7 +20,7 @@ Pod::Spec.new do |s|
 
   s.source_files = "ios/**/*.{h,c,m,swift}"
   s.requires_arc = true
-
+  s.ios.vendored_library = 'ios/symbolrfid-sdk/libZebraSdk.a'
   s.dependency "React"
   # ...
   # s.dependency "..."
