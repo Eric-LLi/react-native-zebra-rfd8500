@@ -3,13 +3,13 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 46;
+	objectVersion = 52;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		079CAC5A25DBF25E008F9825 /* CoreBluetooth.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 079CAC5925DBF25E008F9825 /* CoreBluetooth.framework */; };
 		079CAC5C25DBF269008F9825 /* ExternalAccessory.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 079CAC5B25DBF269008F9825 /* ExternalAccessory.framework */; };
-		079CAC5E25DBF284008F9825 /* libsymbolrfid-sdk.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 079CAC5D25DBF284008F9825 /* libsymbolrfid-sdk.a */; };
+		07EA95D925DCC4C00099B934 /* libsymbolrfid-sdk.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 07EA95D825DCC4C00099B934 /* libsymbolrfid-sdk.a */; platformFilter = ios; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -27,7 +27,7 @@
 /* Begin PBXFileReference section */
 		079CAC5925DBF25E008F9825 /* CoreBluetooth.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreBluetooth.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk/System/Library/Frameworks/CoreBluetooth.framework; sourceTree = DEVELOPER_DIR; };
 		079CAC5B25DBF269008F9825 /* ExternalAccessory.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ExternalAccessory.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk/System/Library/Frameworks/ExternalAccessory.framework; sourceTree = DEVELOPER_DIR; };
-		079CAC5D25DBF284008F9825 /* libsymbolrfid-sdk.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = "libsymbolrfid-sdk.a"; path = "symbolrfid-sdk/libsymbolrfid-sdk.a"; sourceTree = "<group>"; };
+		07EA95D825DCC4C00099B934 /* libsymbolrfid-sdk.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = "libsymbolrfid-sdk.a"; path = "libs/libsymbolrfid-sdk.a"; sourceTree = "<group>"; };
 		134814201AA4EA6300B7C361 /* libZebraRfd8500.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libZebraRfd8500.a; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -36,7 +36,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				079CAC5E25DBF284008F9825 /* libsymbolrfid-sdk.a in Frameworks */,
+				07EA95D925DCC4C00099B934 /* libsymbolrfid-sdk.a in Frameworks */,
 				079CAC5C25DBF269008F9825 /* ExternalAccessory.framework in Frameworks */,
 				079CAC5A25DBF25E008F9825 /* CoreBluetooth.framework in Frameworks */,
 			);
@@ -48,7 +48,7 @@
 		079CAC5825DBF25E008F9825 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				079CAC5D25DBF284008F9825 /* libsymbolrfid-sdk.a */,
+				07EA95D825DCC4C00099B934 /* libsymbolrfid-sdk.a */,
 				079CAC5B25DBF269008F9825 /* ExternalAccessory.framework */,
 				079CAC5925DBF25E008F9825 /* CoreBluetooth.framework */,
 			);
@@ -181,7 +181,10 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 9.0;
-				LD_RUNPATH_SEARCH_PATHS = "/usr/lib/swift $(inherited)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					/usr/lib/swift,
+					"$(inherited)",
+				);
 				LIBRARY_SEARCH_PATHS = (
 					"\"$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)\"",
 					"\"$(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)\"",
@@ -234,7 +237,10 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 9.0;
-				LD_RUNPATH_SEARCH_PATHS = "/usr/lib/swift $(inherited)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					/usr/lib/swift,
+					"$(inherited)",
+				);
 				LIBRARY_SEARCH_PATHS = (
 					"\"$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)\"",
 					"\"$(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)\"",
@@ -255,15 +261,15 @@
 					/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/include,
 					"$(SRCROOT)/../../../React/**",
 					"$(SRCROOT)/../../react-native/React/**",
-					"$(SRCROOT)/symbolrfid-sdk/include/",
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					"$(PROJECT_DIR)/symbolrfid-sdk",
+					"$(PROJECT_DIR)/libs",
 				);
 				OTHER_LDFLAGS = "-ObjC";
 				PRODUCT_NAME = ZebraRfd8500;
 				SKIP_INSTALL = YES;
+				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/include/";
 			};
 			name = Debug;
 		};
@@ -275,15 +281,15 @@
 					/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/include,
 					"$(SRCROOT)/../../../React/**",
 					"$(SRCROOT)/../../react-native/React/**",
-					"$(SRCROOT)/symbolrfid-sdk/include/",
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					"$(PROJECT_DIR)/symbolrfid-sdk",
+					"$(PROJECT_DIR)/libs",
 				);
 				OTHER_LDFLAGS = "-ObjC";
 				PRODUCT_NAME = ZebraRfd8500;
 				SKIP_INSTALL = YES;
+				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/include/";
 			};
 			name = Release;
 		};
