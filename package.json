@@ -10,6 +10,7 @@
   "files": [
     "android",
     "ios",
+    "src",
     "react-native-zebra-rfd8500.podspec",
     "!.DS_Store",
     "!.gradle",
