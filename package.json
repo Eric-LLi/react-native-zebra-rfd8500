@@ -7,6 +7,23 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "files": [
+    "android",
+    "ios",
+    "react-native-zebra-rfd8500.podspec",
+    "!.DS_Store",
+    "!.gradle",
+    "!.idea",
+    "!build",
+    "!gradle",
+    "!*.iml",
+    "!gradlew",
+    "!gradlew.bat",
+    "!local.properties",
+    "!project.xcworkspace",
+    "!xcshareddata",
+    "!xcuserdata"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Eric-LLi/react-native-zebra-rfd8500.git",

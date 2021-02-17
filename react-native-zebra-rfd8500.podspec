@@ -19,8 +19,8 @@ Pod::Spec.new do |s|
   s.source       = { :git => "https://github.com/Eric-LLi/react-native-zebra-rfd8500.git", :tag => "#{s.version}" }
 
   s.source_files = "ios/**/*.{h,c,m,swift}"
-  s.requires_arc = true
-  s.ios.vendored_library = 'ios/libs/libZebraSdk.a'
+  # s.requires_arc = true
+  s.ios.vendored_library = 'ios/libs/libsymbolrfid-sdk.a'
   s.ios.framework = 'ExternalAccessory', 'CoreBluetooth'
   s.dependency "React"
   # ...
