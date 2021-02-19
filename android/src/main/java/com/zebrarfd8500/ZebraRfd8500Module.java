@@ -216,7 +216,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 	}
 
 	@ReactMethod
-	public void connect(String mac, Promise promise) {
+	public void connect(String name, Promise promise) {
 		try {
 			if (reader != null && reader.isConnected()) {
 				doDisconnect();
@@ -229,7 +229,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 			ArrayList<ReaderDevice> devices = readers.GetAvailableRFIDReaderList();
 
 			for (ReaderDevice device : devices) {
-				if (device.getAddress().equals(mac)) {
+				if (device.getName().equals(name)) {
 					readerDevice = device;
 					reader = device.getRFIDReader();
 				}
