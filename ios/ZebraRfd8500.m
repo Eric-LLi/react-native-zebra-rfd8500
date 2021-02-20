@@ -1,6 +1,7 @@
 #import "ZebraRfd8500.h"
 #import <React/RCTLog.h>
 
+#define ZT_MAX_RETRY                          2
 #define ERROR @"ERROR"
 #define LOG @"[RFD8500] "
 #define READER_STATUS @"READER_STATUS"
@@ -16,6 +17,8 @@
     id <srfidISdkApi> m_RfidSdkApi;
     
     srfidReaderInfo *m_readerInfo;
+    
+    BOOL isSingleRead;
 }
 @end
 
@@ -40,9 +43,7 @@
 
 RCT_EXPORT_MODULE()
 
-RCT_EXPORT_METHOD(isConnected:
-                  (RCTPromiseResolveBlock)resolve
-                  rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXPORT_METHOD(isConnected: (RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
     if(m_readerInfo != nil)
     {
@@ -52,9 +53,7 @@ RCT_EXPORT_METHOD(isConnected:
     resolve(@NO);
 }
 
-RCT_EXPORT_METHOD(connect: (NSString *)name
-                  resover:(RCTPromiseResolveBlock)resolve
-                  rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXPORT_METHOD(connect: (NSString *)name resover:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
     NSMutableArray *available_readers = [[NSMutableArray alloc] init];
     [m_RfidSdkApi srfidGetAvailableReadersList:&available_readers];
@@ -63,23 +62,23 @@ RCT_EXPORT_METHOD(connect: (NSString *)name
     {
         if([[reader getReaderName] isEqualToString:name])
         {
-            m_readerInfo = reader;
-            
             /* establish logical communication session */
-            NSString* error = [self connect: [m_readerInfo getReaderID]];
+            NSString* error = [self connect: [reader getReaderID]];
             if(error != nil)
             {
                 reject(ERROR, error, nil);
             }
         }
     }
+    
+    resolve(@YES);
 }
 
-RCT_EXPORT_METHOD(disconnect:
-                  (RCTPromiseResolveBlock)resolve
-                  rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXPORT_METHOD(disconnect: (RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
-    //
+    [self disconnect: [m_readerInfo getReaderID]];
+    
+    resolve(@YES);
 }
 
 RCT_EXPORT_METHOD(clear)
@@ -87,53 +86,151 @@ RCT_EXPORT_METHOD(clear)
     //
 }
 
-RCT_EXPORT_METHOD(getDevices:
-                  (RCTPromiseResolveBlock)resolve
-                  rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXPORT_METHOD(getDevices: (RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
-    /* allocate an array for storage of list of available RFID readers */
-    NSMutableArray *available_readers = [[NSMutableArray alloc] init];
-    /* allocate an array for storage of list of active RFID readers */
-    NSMutableArray *active_readers = [[NSMutableArray alloc] init];
-    
-    if ([m_RfidSdkApi srfidGetAvailableReadersList:&available_readers] == SRFID_RESULT_FAILURE)
-    {
-        reject(ERROR, @"Searhing for available readers has failed", nil);
-    }
-    
-    [m_RfidSdkApi srfidGetActiveReadersList:&active_readers];
-    
-    /* nrv364: due to auto-reconnect option some available scanners may have
-     changed to active and thus the same scanner has appeared in two lists */
-    for (srfidReaderInfo *act in active_readers)
-    {
-        for (srfidReaderInfo *av in available_readers)
+    @try {
+        NSMutableArray *readers = [self getActualDeviceList];
+        NSMutableArray *list = [[NSMutableArray alloc] init];
+        for (srfidReaderInfo *reader in readers)
         {
-            if ([av getReaderID] == [act getReaderID])
-            {
-                [available_readers removeObject:av];
-                break;
-            }
+            [list addObject: @{@"name": [reader getReaderName], @"mac": @""}];
         }
+        
+        resolve(list);
+    } @catch (NSException *exception) {
+        reject(ERROR, exception.reason, nil);
     }
-    
-    /* merge active and available readers to a single list */
-    NSMutableArray *readers = [[NSMutableArray alloc] init];
-    [readers addObjectsFromArray:active_readers];
-    [readers addObjectsFromArray:available_readers];
-    
-    NSMutableArray *list = [[NSMutableArray alloc] init];
-    for (srfidReaderInfo *reader in readers)
-    {
-        [list addObject: @{@"name": reader.getReaderName, @"mac": @""}];
-    }
-    
-    resolve(list);
 }
 
-RCT_EXPORT_METHOD(getDeviceDetails)
+RCT_EXPORT_METHOD(getDeviceDetails: (RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
-    //
+    @try {
+        /* allocate object for storage of capabilities information */
+        srfidReaderCapabilitiesInfo *info = [self getReaderCapabilitiesInfo];
+        
+        srfidAntennaConfiguration *antennaConfig = [self getAntennaConfiguration];
+        
+        NSDictionary *device = @{@"name": [info getScannerName], @"mac": [info getBDAddress], @"power": (NSNumber*) @([antennaConfig getPower])};
+        
+        resolve(device);
+    } @catch (NSException *exception) {
+        reject(ERROR, exception.reason, nil);
+    }
+}
+
+RCT_EXPORT_METHOD(setPower: (NSNumber*) power resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+{
+    @try {
+        srfidAntennaConfiguration *antennaConfig = [self getAntennaConfiguration];
+        
+        [antennaConfig setPower: (short)power];
+        
+        [self setAntennaConfiguration: antennaConfig];
+        
+        resolve(@YES);
+    } @catch (NSException *exception) {
+        reject(ERROR, [exception reason], nil);
+    }
+}
+
+RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+{
+    isSingleRead = enable;
+}
+
+- (NSString*)stringOfRfidStatusEvent:(SRFID_EVENT_STATUS)event
+{
+    if (SRFID_EVENT_STATUS_OPERATION_START == event)
+    {
+        return @"EVENT_OPERATION_START";
+    }
+    else if (SRFID_EVENT_STATUS_OPERATION_STOP == event)
+    {
+        return @"EVENT_OPERATION_STOP";
+    }
+    else if (SRFID_EVENT_STATUS_OPERATION_BATCHMODE == event)
+    {
+        return @"EVENT_BATCH_MODE";
+    }
+    else if (SRFID_EVENT_STATUS_OPERATION_END_SUMMARY == event)
+    {
+        return @"EVENT_OPERATION_END_SUMMARY";
+    }
+    else if (SRFID_EVENT_STATUS_TEMPERATURE == event)
+    {
+        return @"EVENT_TEMPERATURE";
+    }
+    else if (SRFID_EVENT_STATUS_POWER == event)
+    {
+        return @"EVENT_POWER";
+    }
+    else if (SRFID_EVENT_STATUS_DATABASE == event)
+    {
+        return @"EVENT_DATABASE";
+    }
+    
+    return @"EVENT_UNKNOWN";
+}
+
+-(void) defaultConfiguration
+{
+    /* default configuration */
+    
+    /* Disable batch mode */
+    [self setBatchModeConfig: SRFID_BATCHMODECONFIG_DISABLE];
+    
+    /* Disable beeper */
+    [self setBeeperConfig: SRFID_BEEPERCONFIG_QUIET];
+    
+    /* Set DPO configuration */
+    srfidDynamicPowerConfig *dpoConfig = [self getDpoConfiguration];
+    [dpoConfig setDynamicPowerOptimizationEnabled:YES];
+    [self setDpoConfiguration:dpoConfig];
+    
+    /* Set antenna configuration */
+    srfidAntennaConfiguration *antennaConfig = [self getAntennaConfiguration];
+    [antennaConfig setTari:0];
+    [antennaConfig setLinkProfileIdx:0];
+    [self setAntennaConfiguration:antennaConfig];
+    
+    /* Set singulation configuration */
+    srfidSingulationConfig *singulationConfig = [self getSingulationConfiguration];
+    [singulationConfig setSession:SRFID_SESSION_S0];
+    [singulationConfig setSlFlag:SRFID_SLFLAG_ALL];
+    [singulationConfig setInventoryState:SRFID_INVENTORYSTATE_A];
+    [self setSingulationConfiguration:singulationConfig];
+    
+    /* Set trigger configuration */
+    srfidStartTriggerConfig *startConfig = [self getStartTriggerConfiguration];
+    [startConfig setStartOnHandheldTrigger:YES];
+    [startConfig setTriggerType:SRFID_TRIGGERTYPE_PRESS];
+    [startConfig setRepeatMonitoring:NO];
+    [startConfig setStartDelay:0];
+    [self setStartTriggerConfiguration:startConfig];
+    
+    srfidStopTriggerConfig *stopConfig = [self getStopTriggerConfiguration];
+    [stopConfig setStopOnHandheldTrigger:YES];
+    [stopConfig setTriggerType:SRFID_TRIGGERTYPE_RELEASE];
+    
+    [self setStopTriggerConfiguration:stopConfig];
+    
+    /* Set tag report configuration */
+    srfidTagReportConfig *tagReportConfig = [self getTagReportConfiguration];
+    [tagReportConfig setIncRSSI:YES];
+    [tagReportConfig setIncPC:NO];
+    [tagReportConfig setIncPhase:NO];
+    [tagReportConfig setIncChannelIdx:NO];
+    [tagReportConfig setIncTagSeenCount:NO];
+    [tagReportConfig setIncFirstSeenTime:NO];
+    [tagReportConfig setIncLastSeenTime:NO];
+    [self setTagReportConfiguration:tagReportConfig];
+    
+    /* delete any prefilters */
+    NSMutableArray *prefilters = [self getPrefilters];
+    [prefilters removeAllObjects];
+    [self setPrefilters:prefilters];
+    
+    RCTLogInfo(@"%@Default Configuration Finished...", LOG);
 }
 
 -(id)init
@@ -166,11 +263,16 @@ RCT_EXPORT_METHOD(getDeviceDetails)
     NSString *sdk_version = [m_RfidSdkApi srfidGetSdkVersion];
     RCTLogInfo(@"%@Zebra SDK version: %@\n", LOG, sdk_version);
     
-    [self initializeListeners];
-}
-
-- (void) initializeListeners
-{
+    NSUserDefaults *settings = [NSUserDefaults standardUserDefaults];
+    
+    int op_mode = (int)[settings integerForKey: @"ZtSymbolRfidAppCfgOpMode"];
+    if (op_mode == 0)
+    {
+        /* no value => setup default values */
+        op_mode = SRFID_OPMODE_MFI;
+        [settings setInteger:op_mode forKey: @"ZtSymbolRfidAppCfgOpMode"];
+    }
+    
     /* subscribe for tag data and operation status related events */
     [m_RfidSdkApi srfidSubsribeForEvents:(SRFID_EVENT_MASK_READ |
                                           SRFID_EVENT_MASK_STATUS)];
@@ -180,7 +282,7 @@ RCT_EXPORT_METHOD(getDeviceDetails)
                                           SRFID_EVENT_MASK_TRIGGER)];
     
     /* configuring SDK to communicate with RFID readers in BT MFi mode */
-    [m_RfidSdkApi srfidSetOperationalMode:SRFID_OPMODE_MFI];
+    [m_RfidSdkApi srfidSetOperationalMode:op_mode];
     
     /* subscribe for connectivity related events */
     [m_RfidSdkApi srfidSubsribeForEvents:(SRFID_EVENT_READER_APPEARANCE |
@@ -199,25 +301,77 @@ RCT_EXPORT_METHOD(getDeviceDetails)
     /* subscribe for tag locationing related events */
     [m_RfidSdkApi srfidSubsribeForEvents:SRFID_EVENT_MASK_PROXIMITY];
     
-    RCTLogInfo(@"%@initializeListeners finished\n", LOG);
+    RCTLogInfo(@"%@Initialize Listeners Finished\n", LOG);
+}
+
+#pragma mark - device management
+
+- (NSMutableArray*)getActualDeviceList
+{
+    NSMutableArray *available = [[NSMutableArray alloc] init];
+    NSMutableArray *active = [[NSMutableArray alloc] init];
+    NSMutableArray *readers = [[NSMutableArray alloc] init];
+    NSString* error_response = nil;
+    
+    if (m_RfidSdkApi != nil)
+    {
+        for (int i = 0; i < ZT_MAX_RETRY; i++) {
+            if ([m_RfidSdkApi srfidGetAvailableReadersList:&available] == SRFID_RESULT_FAILURE)
+            {
+                error_response = @"Connection failed";
+            }
+            
+            [m_RfidSdkApi srfidGetActiveReadersList:&active];
+            
+            /* nrv364: due to auto-reconnect option some available scanners may have
+             changed to active and thus the same scanner has appeared in two lists */
+            for (srfidReaderInfo *act in active)
+            {
+                for (srfidReaderInfo *av in available)
+                {
+                    if ([av getReaderID] == [act getReaderID])
+                    {
+                        [available removeObject:av];
+                        break;
+                    }
+                }
+            }
+        }
+        
+        /* merge active and available readers to a single list */
+        NSMutableArray *readers = [[NSMutableArray alloc] init];
+        [readers addObjectsFromArray:active];
+        [readers addObjectsFromArray:available];
+    }
+    else
+    {
+        error_response = @"Connection failed";
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+    
+    return readers;
 }
 
 - (NSString* )connect:(int)reader_id
 {
-    NSString* error = @"Connection failed";
+    NSString* error_response = nil;
     
     if (m_RfidSdkApi != nil)
     {
         SRFID_RESULT conn_result = [m_RfidSdkApi srfidEstablishCommunicationSession:reader_id];
         /*Setting batch mode to default after connect and will be set back if and when event is received*/
-        //        [m_ActiveReader setBatchModeStatus:NO];
+        
         if (SRFID_RESULT_SUCCESS != conn_result)
         {
-            error = nil;
+            error_response = @"Connection failed";
         }
     }
     
-    return error;
+    return error_response;
 }
 
 - (void)disconnect:(int)reader_id
@@ -228,17 +382,623 @@ RCT_EXPORT_METHOD(getDeviceDetails)
     }
 }
 
-- (void)srfidEventBatteryNotity:(int)readerID aBatteryEvent:(srfidBatteryEvent *)batteryEvent
+#pragma mark - settings request
+
+- (void)setBeeperConfig:(SRFID_BEEPERCONFIG) beeperConfig
 {
-    RCTLogInfo(@"%@srfidEventBatteryNotity: %d\n", LOG, batteryEvent.getPowerLevel);
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    NSString *error_response = nil;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidSetBeeperConfig:[m_readerInfo getReaderID] aBeeperConfig: beeperConfig aStatusMessage: &error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE))
+        {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Beeper configuration has been set\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
 }
+
+- (void)setBatchModeConfig:(SRFID_BATCHMODECONFIG) batchConfig
+{
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    NSString *error_response = nil;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidSetBatchModeConfig:[m_readerInfo getReaderID] aBatchModeConfig: batchConfig aStatusMessage: &error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE))
+        {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Batch mode configuration has been set\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+}
+
+- (srfidAntennaConfiguration*)getAntennaConfiguration
+{
+    srfidAntennaConfiguration *antenaCofiguration = [[srfidAntennaConfiguration alloc] init];
+    NSString *error_response = nil;
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidGetAntennaConfiguration:[m_readerInfo getReaderID] aAntennaConfiguration:&antenaCofiguration aStatusMessage:&error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
+            break;
+        }
+    }
+    
+    // we check if the power level from a device match the app power level
+    // if not we set the nearest value to the device
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Get Reader Antenna Successfully\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+    
+    return antenaCofiguration;
+}
+
+- (void)setAntennaConfiguration: (srfidAntennaConfiguration*) antennaConfig
+{
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    NSString *error_response = nil;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidSetAntennaConfiguration:[m_readerInfo getReaderID] aAntennaConfiguration:antennaConfig aStatusMessage:&error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Set Reader Antenna Successfully\n", LOG);
+        
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+}
+
+- (srfidReaderCapabilitiesInfo*)getReaderCapabilitiesInfo
+{
+    srfidReaderCapabilitiesInfo *info = [[srfidReaderCapabilitiesInfo alloc] init];
+    NSString *error_response = nil;
+    
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidGetReaderCapabilitiesInfo:[m_readerInfo getReaderID] aReaderCapabilitiesInfo:&info aStatusMessage:&error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE))
+        {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Get Reader CapabilitiesInfo Successfully\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+    
+    return info;
+}
+
+- (srfidSingulationConfig*)getSingulationConfiguration
+{
+    srfidSingulationConfig *singulationCofiguration = [[srfidSingulationConfig alloc] init];
+    NSString *error_response = nil;
+    
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidGetSingulationConfiguration:[m_readerInfo getReaderID] aSingulationConfig:&singulationCofiguration aStatusMessage:&error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Get SingulationConfig Successfully\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+    
+    return singulationCofiguration;
+}
+
+- (void)setSingulationConfiguration:(srfidSingulationConfig*)singulationConfiguration
+{
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    NSString *error_response = nil;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidSetSingulationConfiguration:[m_readerInfo getReaderID]aSingulationConfig:singulationConfiguration aStatusMessage:&error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Set SingulationConfig Successfully\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+}
+
+- (srfidDynamicPowerConfig*)getDpoConfiguration
+{
+    srfidDynamicPowerConfig *dpoConfig = [[srfidDynamicPowerConfig alloc] init];
+    NSString *error_response = nil;
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidGetDpoConfiguration:[m_readerInfo getReaderID] aDpoConfiguration:&dpoConfig aStatusMessage:&error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Get DPO Successfully\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+    return dpoConfig;
+}
+
+- (void)setDpoConfiguration:(srfidDynamicPowerConfig* )dpoConfiguration
+{
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    NSString *error_response = nil;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidSetDpoConfiguration:[m_readerInfo getReaderID] aDpoConfiguration:dpoConfiguration aStatusMessage:&error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Set DPO Successfully\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+}
+
+- (srfidStartTriggerConfig*)getStartTriggerConfiguration
+{
+    srfidStartTriggerConfig *config = [[srfidStartTriggerConfig alloc] init];
+    NSString *error_response = nil;
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidGetStartTriggerConfiguration:[m_readerInfo getReaderID] aStartTriggeConfig:&config aStatusMessage:&error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Get StartTriggerConfiguration Successfully\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+    return config;
+}
+
+- (void)setStartTriggerConfiguration:(srfidStartTriggerConfig*)config
+{
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    NSString *error_response = nil;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidSetStartTriggerConfiguration:[m_readerInfo getReaderID] aStartTriggeConfig:config aStatusMessage:&error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Set StartTriggerConfiguration Successfully\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+}
+
+- (srfidStopTriggerConfig*)getStopTriggerConfiguration
+{
+    srfidStopTriggerConfig *config = [[srfidStopTriggerConfig alloc]init];
+    NSString *error_response = nil;
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidGetStopTriggerConfiguration:[m_readerInfo getReaderID] aStopTriggeConfig:&config aStatusMessage:&error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Get StartTriggerConfiguration Successfully\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+    return config;
+}
+
+- (void)setStopTriggerConfiguration:(srfidStopTriggerConfig*)config
+{
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    NSString *error_response = nil;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidSetStopTriggerConfiguration:[m_readerInfo getReaderID] aStopTriggeConfig:config aStatusMessage:&error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Set StopTriggerConfiguration Successfully\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+}
+
+- (srfidTagReportConfig*)getTagReportConfiguration
+{
+    srfidTagReportConfig *reportCofiguration = [[srfidTagReportConfig alloc]init];
+    NSString *error_response = nil;
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidGetTagReportConfiguration:[m_readerInfo getReaderID] aTagReportConfig:&reportCofiguration aStatusMessage:&error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Get TagReportConfiguration Successfully\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+    return reportCofiguration;
+}
+
+- (void)setTagReportConfiguration:(srfidTagReportConfig*)config
+{
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    NSString *error_response = nil;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidSetTagReportConfiguration:[m_readerInfo getReaderID]  aTagReportConfig:config aStatusMessage:&error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Set TagReportConfiguration Successfully\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+}
+
+- (NSMutableArray*)getPrefilters
+{
+    NSMutableArray *prefilters = [[NSMutableArray alloc] init];
+    NSString *error_response = nil;
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidGetPreFilters:[m_readerInfo getReaderID] aPreFilters:&prefilters aStatusMessage:&error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Get Prefilters Successfully\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+    
+    return prefilters;
+}
+
+- (void)setPrefilters:(NSMutableArray*)prefilters
+{
+    NSString *error_response = nil;
+    SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
+    
+    for(int i = 0; i < ZT_MAX_RETRY; i++)
+    {
+        srfid_result = [m_RfidSdkApi srfidSetPreFilters:[m_readerInfo getReaderID] aPreFilters:prefilters aStatusMessage:&error_response];
+        
+        if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
+            break;
+        }
+    }
+    
+    if (srfid_result == SRFID_RESULT_SUCCESS)
+    {
+        error_response = nil;
+        RCTLogInfo(@"%@Set Prefilters Successfully\n", LOG);
+    }
+    else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+    {
+        RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+    }
+    else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+    {
+        RCTLogInfo(@"%@Problem with reader connection", LOG);
+    }
+    
+    if(error_response != nil)
+    {
+        @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+    }
+}
+
+#pragma mark - delegate protocol implementation
+/* ###################################################################### */
+/* ########## IRfidSdkApiDelegate Protocol implementation ############### */
+/* ###################################################################### */
 
 - (void)srfidEventCommunicationSessionEstablished:(srfidReaderInfo *)activeReader
 {
-    RCTLogInfo(@"%@%@ has connected\n", LOG, [activeReader getReaderName]);
-    m_readerInfo = activeReader;
-    [m_readerInfo setActive:YES];
-    
     /* establish an ASCII protocol level connection */
     NSString *password = @"";
     SRFID_RESULT result = [m_RfidSdkApi srfidEstablishAsciiConnection:[m_readerInfo getReaderID] aPassword:password];
@@ -246,7 +1006,11 @@ RCT_EXPORT_METHOD(getDeviceDetails)
     NSString* error = nil;
     if (SRFID_RESULT_SUCCESS == result)
     {
-        //
+        m_readerInfo = activeReader;
+        
+        [self defaultConfiguration];
+        
+        RCTLogInfo(@"%@%@ has connected\n", LOG, [activeReader getReaderName]);
     }
     else if (SRFID_RESULT_WRONG_ASCII_PASSWORD == result)
     {
@@ -266,17 +1030,8 @@ RCT_EXPORT_METHOD(getDeviceDetails)
 
 - (void)srfidEventCommunicationSessionTerminated:(int)readerID
 {
+    [m_readerInfo setActive: NO];
     RCTLogInfo(@"%@RFID reader has disconnected: ID = %d\n", LOG, readerID);
-}
-
-- (void)srfidEventProximityNotify:(int)readerID aProximityPercent:(int)proximityPercent
-{
-    RCTLogInfo(@"%@srfidEventProximityNotify: %d\n", LOG, proximityPercent);
-}
-
-- (void)srfidEventReadNotify:(int)readerID aTagData:(srfidTagData *)tagData
-{
-    RCTLogInfo(@"%@srfidEventReadNotify: %@\n", LOG, tagData.getTagId);
 }
 
 - (void)srfidEventReaderAppeared:(srfidReaderInfo *)availableReader
@@ -289,14 +1044,52 @@ RCT_EXPORT_METHOD(getDeviceDetails)
     RCTLogInfo(@"%@RFID reader has disappeared: ID = %d\n", LOG, readerID);
 }
 
+- (void)srfidEventBatteryNotity:(int)readerID aBatteryEvent:(srfidBatteryEvent *)batteryEvent
+{
+    RCTLogInfo(@"%@batteryEvent: level = [%d] charging = [%d] cause = (%@)\n", LOG, [batteryEvent getPowerLevel], [batteryEvent getIsCharging], [batteryEvent getEventCause]);
+}
+
+- (void)srfidEventProximityNotify:(int)readerID aProximityPercent:(int)proximityPercent
+{
+    //    RCTLogInfo(@"%@srfidEventProximityNotify: %d\n", LOG, proximityPercent);
+    if (hasListeners)
+    {
+        // Only send events if anyone is listening
+        [self sendEventWithName: LOCATE_TAG body:@{@"distance": @(proximityPercent)}];
+    }
+}
+
+- (void)srfidEventReadNotify:(int)readerID aTagData:(srfidTagData *)tagData
+{
+    //    RCTLogInfo(@"%@srfidEventReadNotify: %@\n", LOG, tagData.getTagId);
+    if (hasListeners)
+    {
+        // Only send events if anyone is listening
+        [self sendEventWithName: TAG body:@{@"tag": tagData.getTagId}];
+    }
+}
+
 - (void)srfidEventStatusNotify:(int)readerID aEvent:(SRFID_EVENT_STATUS)event aNotification:(id)notificationData
 {
-    RCTLogInfo(@"%@srfidEventStatusNotify: %@\n", LOG, notificationData);
+    RCTLogInfo(@"%@eventStatusNotify: %@\n", LOG, [self stringOfRfidStatusEvent:event]);
 }
 
 - (void)srfidEventTriggerNotify:(int)readerID aTriggerEvent:(SRFID_TRIGGEREVENT)triggerEvent
 {
-    RCTLogInfo(@"%@srfidEventTriggerNotify: %u\n", LOG, triggerEvent);
+    if(triggerEvent == SRFID_TRIGGEREVENT_PRESSED)
+    {
+        RCTLogInfo(@"%@srfidEventTriggerNotify Pressed", LOG);
+    }
+    else
+    {
+        RCTLogInfo(@"%@srfidEventTriggerNotify Released", LOG);
+    }
+    
+    if (hasListeners)
+    {
+        // Only send events if anyone is listening
+        [self sendEventWithName: TRIGGER_STATUS body:@{@"status": triggerEvent == SRFID_TRIGGEREVENT_PRESSED ? @YES : @NO}];
+    }
 }
 
 @end

@@ -155,18 +155,15 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 	@Override
 	public void eventStatusNotify(RfidStatusEvents rfidStatusEvents) {
 		if (rfidStatusEvents.StatusEventData.getStatusEventType() == STATUS_EVENT_TYPE.HANDHELD_TRIGGER_EVENT) {
-			WritableMap map = Arguments.createMap();
 			if (rfidStatusEvents.StatusEventData.HandheldTriggerEventData.getHandheldEvent() == HANDHELD_TRIGGER_EVENT_TYPE.HANDHELD_TRIGGER_PRESSED) {
-				map.putBoolean("status", true);
-				sendEvent(TRIGGER_STATUS, map);
-
 				read();
 			} else if (rfidStatusEvents.StatusEventData.HandheldTriggerEventData.getHandheldEvent() == HANDHELD_TRIGGER_EVENT_TYPE.HANDHELD_TRIGGER_RELEASED) {
-				map.putBoolean("status", false);
-				sendEvent(TRIGGER_STATUS, map);
-
 				cancel();
 			}
+
+			WritableMap map = Arguments.createMap();
+			map.putBoolean("status", rfidStatusEvents.StatusEventData.HandheldTriggerEventData.getHandheldEvent() == HANDHELD_TRIGGER_EVENT_TYPE.HANDHELD_TRIGGER_PRESSED);
+			sendEvent(TRIGGER_STATUS, map);
 		}
 	}
 
@@ -483,9 +480,9 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 			reader.Config.setDPOState(DYNAMIC_POWER_OPTIMIZATION.ENABLE);
 			// power levels are index based so maximum power supported get the last one
 			MAX_POWER = reader.ReaderCapabilities.getTransmitPowerLevelValues().length - 1;
-			// set antenna configurations
+			// set antenna configuration
 			Antennas.AntennaRfConfig config = reader.Config.Antennas.getAntennaRfConfig(1);
-			config.setTransmitPowerIndex(MAX_POWER);
+//			config.setTransmitPowerIndex(MAX_POWER);
 			config.setrfModeTableIndex(0);
 			config.setTari(0);
 			reader.Config.Antennas.setAntennaRfConfig(1, config);
