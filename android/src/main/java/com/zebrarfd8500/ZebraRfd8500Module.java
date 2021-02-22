@@ -56,7 +56,6 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 	private final String WRITE_TAG_STATUS = "WRITE_TAG_STATUS";
 	private final String TAG = "TAG";
 	private final String LOCATE_TAG = "LOCATE_TAG";
-	private int MAX_POWER = 270;
 
 	private static Readers readers;
 	private static ReaderDevice readerDevice;
@@ -132,7 +131,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
 				int rssi = myTag.getPeakRSSI();
 				String EPC = myTag.getTagID();
-				Log.i("RFID", "Tag ID = " + EPC);
+				Log.d("RFID", "Tag ID = " + EPC);
 
 				if (isSingleRead) {
 					if (rssi > -40) {
@@ -164,6 +163,18 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 			WritableMap map = Arguments.createMap();
 			map.putBoolean("status", rfidStatusEvents.StatusEventData.HandheldTriggerEventData.getHandheldEvent() == HANDHELD_TRIGGER_EVENT_TYPE.HANDHELD_TRIGGER_PRESSED);
 			sendEvent(TRIGGER_STATUS, map);
+		}
+
+		if (rfidStatusEvents.StatusEventData.getStatusEventType() == STATUS_EVENT_TYPE.DISCONNECTION_EVENT) {
+			WritableMap map = Arguments.createMap();
+			map.putBoolean("status", false);
+			sendEvent(READER_STATUS, map);
+		}
+
+		if (rfidStatusEvents.StatusEventData.getStatusEventType() == STATUS_EVENT_TYPE.BATTERY_EVENT) {
+//			WritableMap map = Arguments.createMap();
+//			map.putBoolean("status", false);
+//			sendEvent(READER_STATUS, map);
 		}
 	}
 
@@ -233,13 +244,9 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 			}
 
 			String error = doConnect();
-			boolean status = false;
-			if (error == null) {
-				status = true;
-			}
 
 			WritableMap map = Arguments.createMap();
-			map.putBoolean("status", status);
+			map.putBoolean("status", error == null);
 			map.putString("error", error);
 			sendEvent(READER_STATUS, map);
 		} catch (Exception error) {
@@ -252,14 +259,12 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 		if (reader != null && reader.isConnected()) {
 			try {
 				Antennas.AntennaRfConfig antennaRFConfig = reader.Config.Antennas.getAntennaRfConfig(1);
-				long test = antennaRFConfig.getTari();
-				int power = antennaRFConfig.getTransmitPowerIndex();
-				long test3 = antennaRFConfig.getrfModeTableIndex();
+				int antennaLevel = antennaRFConfig.getTransmitPowerIndex();
 
 				WritableMap map = Arguments.createMap();
 				map.putString("name", readerDevice.getName());
 				map.putString("mac", readerDevice.getAddress());
-				map.putInt("power", power / 10);
+				map.putInt("antennaLevel", antennaLevel / 10);
 
 				promise.resolve(map);
 			} catch (InvalidUsageException e) {
@@ -286,14 +291,14 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 	}
 
 	@ReactMethod
-	public void setPower(int power, Promise promise) {
+	public void setAntennaLevel(int antennaLevel, Promise promise) {
 		if (reader != null && reader.isConnected()) {
 			Antennas.AntennaRfConfig antennaRfConfig = null;
 			try {
 				antennaRfConfig = reader.Config.Antennas
 						.getAntennaRfConfig(1);
 
-				antennaRfConfig.setTransmitPowerIndex(power * 10);
+				antennaRfConfig.setTransmitPowerIndex(antennaLevel * 10);
 				reader.Config.Antennas.setAntennaRfConfig(1, antennaRfConfig);
 
 				promise.resolve(true);
@@ -305,7 +310,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 			}
 		}
 
-		promise.reject(LOG, "Fail to change power");
+		promise.reject(LOG, "Fail to change antenna level");
 	}
 
 	@ReactMethod
@@ -406,7 +411,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 							if ("AUS".equals(regionInfo.getRegionCode())) {
 								regulatoryConfig.setRegion(regionInfo.getRegionCode());
 								reader.Config.setRegulatoryConfig(regulatoryConfig);
-								Log.i("RFID", "Region set to " + regionInfo.getName());
+								Log.d("RFID", "Region set to " + regionInfo.getName());
 							}
 						}
 					} catch (InvalidUsageException | OperationFailureException invalidUsageException) {
@@ -469,7 +474,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 			reader.Config.setBatchMode(BATCH_MODE.DISABLE);
 
 			//Turn Off beeper
-			reader.Config.setBeeperVolume(BEEPER_VOLUME.QUIET_BEEP);
+			reader.Config.setBeeperVolume(BEEPER_VOLUME.HIGH_BEEP);
 
 			// set trigger mode as rfid so scanner beam will not come
 			reader.Config.setTriggerMode(ENUM_TRIGGER_MODE.RFID_MODE, true);
@@ -479,7 +484,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 			//set DPO enable
 			reader.Config.setDPOState(DYNAMIC_POWER_OPTIMIZATION.ENABLE);
 			// power levels are index based so maximum power supported get the last one
-			MAX_POWER = reader.ReaderCapabilities.getTransmitPowerLevelValues().length - 1;
+//			MAX_POWER = reader.ReaderCapabilities.getTransmitPowerLevelValues().length - 1;
 			// set antenna configuration
 			Antennas.AntennaRfConfig config = reader.Config.Antennas.getAntennaRfConfig(1);
 //			config.setTransmitPowerIndex(MAX_POWER);
@@ -519,7 +524,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
 	private boolean addTagToList(String strEPC) {
 		if (strEPC != null) {
-			if (!checkIsExisted(strEPC)) {
+			if (!cacheTags.contains(strEPC)) {
 				cacheTags.add(strEPC);
 				return true;
 			}
@@ -527,13 +532,13 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 		return false;
 	}
 
-	private boolean checkIsExisted(String strEPC) {
-		for (int i = 0; i < cacheTags.size(); i++) {
-			String tag = cacheTags.get(i);
-			if (strEPC != null && strEPC.equals(tag)) {
-				return true;
-			}
-		}
-		return false;
-	}
+//	private boolean checkIsExisted(String strEPC) {
+//		for (int i = 0; i < cacheTags.size(); i++) {
+//			String tag = cacheTags.get(i);
+//			if (strEPC != null && strEPC.equals(tag)) {
+//				return true;
+//			}
+//		}
+//		return false;
+//	}
 }

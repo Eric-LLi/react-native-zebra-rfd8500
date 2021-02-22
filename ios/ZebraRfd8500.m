@@ -13,11 +13,10 @@
 @interface ZebraRfd8500()
 {
     bool hasListeners;
-    int MAX_POWER;
     id <srfidISdkApi> m_RfidSdkApi;
     
     srfidReaderInfo *m_readerInfo;
-    
+    NSMutableArray *cacheTags;
     BOOL isSingleRead;
 }
 @end
@@ -30,13 +29,15 @@
 }
 
 // Will be called when this module's first listener is added.
--(void)startObserving {
+-(void)startObserving
+{
     hasListeners = YES;
     // Set up any upstream listeners or background tasks as necessary
 }
 
 // Will be called when this module's last listener is removed, or on dealloc.
--(void)stopObserving {
+-(void)stopObserving
+{
     hasListeners = NO;
     // Remove upstream listeners, stop unnecessary background tasks
 }
@@ -55,40 +56,63 @@ RCT_EXPORT_METHOD(isConnected: (RCTPromiseResolveBlock)resolve rejecter:(RCTProm
 
 RCT_EXPORT_METHOD(connect: (NSString *)name resover:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
-    NSMutableArray *available_readers = [[NSMutableArray alloc] init];
-    [m_RfidSdkApi srfidGetAvailableReadersList:&available_readers];
-    
-    for (srfidReaderInfo *reader in available_readers)
+    if(m_RfidSdkApi == nil)
     {
-        if([[reader getReaderName] isEqualToString:name])
+        [self initializeRfidSdk];
+    }
+    
+    if(![m_readerInfo isActive])
+    {
+        NSMutableArray *readers = [self getActualDeviceList];
+        
+        if(readers.count == 0)
         {
-            /* establish logical communication session */
-            NSString* error = [self connect: [reader getReaderID]];
-            if(error != nil)
+            reject(ERROR, @"Reader Conncetion fail...", nil);
+        }
+        else
+        {
+            for (srfidReaderInfo *reader in readers)
             {
-                reject(ERROR, error, nil);
+                if([[reader getReaderName] isEqualToString:name])
+                {
+                    /* establish logical communication session */
+                    NSString* error = [self doConnect: [reader getReaderID]];
+                    if(error != nil)
+                    {
+                        reject(ERROR, error, nil);
+                    }
+                }
             }
         }
     }
-    
-    resolve(@YES);
+    else
+    {
+        resolve(@YES);
+    }
 }
 
 RCT_EXPORT_METHOD(disconnect: (RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
-    [self disconnect: [m_readerInfo getReaderID]];
+    [self clear];
+    [self doDisconnect: [m_readerInfo getReaderID]];
     
     resolve(@YES);
 }
 
 RCT_EXPORT_METHOD(clear)
 {
-    //
+    [cacheTags removeAllObjects];
 }
 
 RCT_EXPORT_METHOD(getDevices: (RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
-    @try {
+    @try
+    {
+        if(m_RfidSdkApi == nil)
+        {
+            [self initializeRfidSdk];
+        }
+        
         NSMutableArray *readers = [self getActualDeviceList];
         NSMutableArray *list = [[NSMutableArray alloc] init];
         for (srfidReaderInfo *reader in readers)
@@ -97,38 +121,46 @@ RCT_EXPORT_METHOD(getDevices: (RCTPromiseResolveBlock)resolve rejecter:(RCTPromi
         }
         
         resolve(list);
-    } @catch (NSException *exception) {
+    }
+    @catch (NSException *exception)
+    {
         reject(ERROR, exception.reason, nil);
     }
 }
 
 RCT_EXPORT_METHOD(getDeviceDetails: (RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
-    @try {
+    @try
+    {
         /* allocate object for storage of capabilities information */
         srfidReaderCapabilitiesInfo *info = [self getReaderCapabilitiesInfo];
         
         srfidAntennaConfiguration *antennaConfig = [self getAntennaConfiguration];
         
-        NSDictionary *device = @{@"name": [info getScannerName], @"mac": [info getBDAddress], @"power": (NSNumber*) @([antennaConfig getPower])};
+        NSDictionary *device = @{@"name": [m_readerInfo getReaderName], @"mac": [info getBDAddress], @"antennaLevel": @([antennaConfig getPower] / 10)};
         
         resolve(device);
-    } @catch (NSException *exception) {
+    }
+    @catch (NSException *exception)
+    {
         reject(ERROR, exception.reason, nil);
     }
 }
 
-RCT_EXPORT_METHOD(setPower: (NSNumber*) power resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXPORT_METHOD(setAntennaLevel: (int) antennaLevel resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
-    @try {
+    @try
+    {
         srfidAntennaConfiguration *antennaConfig = [self getAntennaConfiguration];
         
-        [antennaConfig setPower: (short)power];
+        [antennaConfig setPower: antennaLevel * 10];
         
         [self setAntennaConfiguration: antennaConfig];
         
         resolve(@YES);
-    } @catch (NSException *exception) {
+    }
+    @catch (NSException *exception)
+    {
         reject(ERROR, [exception reason], nil);
     }
 }
@@ -138,39 +170,17 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
     isSingleRead = enable;
 }
 
-- (NSString*)stringOfRfidStatusEvent:(SRFID_EVENT_STATUS)event
+RCT_EXPORT_METHOD(programTag: (NSString*) oldTag  anewTag:(NSString*) newTag resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
-    if (SRFID_EVENT_STATUS_OPERATION_START == event)
-    {
-        return @"EVENT_OPERATION_START";
-    }
-    else if (SRFID_EVENT_STATUS_OPERATION_STOP == event)
-    {
-        return @"EVENT_OPERATION_STOP";
-    }
-    else if (SRFID_EVENT_STATUS_OPERATION_BATCHMODE == event)
-    {
-        return @"EVENT_BATCH_MODE";
-    }
-    else if (SRFID_EVENT_STATUS_OPERATION_END_SUMMARY == event)
-    {
-        return @"EVENT_OPERATION_END_SUMMARY";
-    }
-    else if (SRFID_EVENT_STATUS_TEMPERATURE == event)
-    {
-        return @"EVENT_TEMPERATURE";
-    }
-    else if (SRFID_EVENT_STATUS_POWER == event)
-    {
-        return @"EVENT_POWER";
-    }
-    else if (SRFID_EVENT_STATUS_DATABASE == event)
-    {
-        return @"EVENT_DATABASE";
-    }
-    
-    return @"EVENT_UNKNOWN";
+    //
 }
+
+RCT_EXPORT_METHOD(setEnabled : (BOOL) enable resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+{
+    //
+}
+
+#pragma mark - private functions
 
 -(void) defaultConfiguration
 {
@@ -180,7 +190,7 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
     [self setBatchModeConfig: SRFID_BATCHMODECONFIG_DISABLE];
     
     /* Disable beeper */
-    [self setBeeperConfig: SRFID_BEEPERCONFIG_QUIET];
+    [self setBeeperConfig: SRFID_BEEPERCONFIG_HIGH];
     
     /* Set DPO configuration */
     srfidDynamicPowerConfig *dpoConfig = [self getDpoConfiguration];
@@ -208,13 +218,16 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
     [startConfig setStartDelay:0];
     [self setStartTriggerConfiguration:startConfig];
     
+    /* configure stop triggers parameters to stop on physical trigger release or on 25 sec timeout*/
     srfidStopTriggerConfig *stopConfig = [self getStopTriggerConfiguration];
     [stopConfig setStopOnHandheldTrigger:YES];
     [stopConfig setTriggerType:SRFID_TRIGGERTYPE_RELEASE];
-    
+    [stopConfig setStopOnTimeout:YES];
+    [stopConfig setStopTimout:(25*1000)];
     [self setStopTriggerConfiguration:stopConfig];
     
     /* Set tag report configuration */
+    /* configure report parameters to report RSSI only*/
     srfidTagReportConfig *tagReportConfig = [self getTagReportConfiguration];
     [tagReportConfig setIncRSSI:YES];
     [tagReportConfig setIncPC:NO];
@@ -225,7 +238,7 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
     [tagReportConfig setIncLastSeenTime:NO];
     [self setTagReportConfiguration:tagReportConfig];
     
-    /* delete any prefilters */
+    /* delete all prefilters */
     NSMutableArray *prefilters = [self getPrefilters];
     [prefilters removeAllObjects];
     [self setPrefilters:prefilters];
@@ -233,29 +246,13 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
     RCTLogInfo(@"%@Default Configuration Finished...", LOG);
 }
 
--(id)init
-{
-    self = [super init];
-    RCTLogInfo(@"%@init...", LOG);
-    
-    if(self != nil && m_RfidSdkApi == nil){
-        m_readerInfo = [[srfidReaderInfo alloc] init];
-        
-        MAX_POWER = 270;
-        
-        [self initializeRfidSdk];
-    }
-    
-    return self;
-}
-
-- (void)dealloc
-{
-    RCTLogInfo(@"%@dealloc...", LOG);
-}
-
 - (void) initializeRfidSdk
 {
+    m_readerInfo = [[srfidReaderInfo alloc] init];
+    [m_readerInfo setActive:NO];
+    cacheTags = [[NSMutableArray alloc] init];
+    isSingleRead = NO;
+    
     m_RfidSdkApi = [srfidSdkFactory createRfidSdkApiInstance];
     [m_RfidSdkApi srfidSetDelegate:self];
     
@@ -339,7 +336,7 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
         }
         
         /* merge active and available readers to a single list */
-        NSMutableArray *readers = [[NSMutableArray alloc] init];
+        [readers removeAllObjects];
         [readers addObjectsFromArray:active];
         [readers addObjectsFromArray:available];
     }
@@ -356,7 +353,7 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
     return readers;
 }
 
-- (NSString* )connect:(int)reader_id
+- (NSString* )doConnect:(int)reader_id
 {
     NSString* error_response = nil;
     
@@ -374,11 +371,13 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
     return error_response;
 }
 
-- (void)disconnect:(int)reader_id
+- (void)doDisconnect:(int)reader_id
 {
     if (m_RfidSdkApi != nil)
     {
         [m_RfidSdkApi srfidTerminateCommunicationSession:reader_id];
+        
+        //
     }
 }
 
@@ -747,14 +746,14 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
     return config;
 }
 
-- (void)setStartTriggerConfiguration:(srfidStartTriggerConfig*)config
+- (void)setStartTriggerConfiguration:(srfidStartTriggerConfig*)triggerConfig
 {
     SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
     NSString *error_response = nil;
     
     for(int i = 0; i < ZT_MAX_RETRY; i++)
     {
-        srfid_result = [m_RfidSdkApi srfidSetStartTriggerConfiguration:[m_readerInfo getReaderID] aStartTriggeConfig:config aStatusMessage:&error_response];
+        srfid_result = [m_RfidSdkApi srfidSetStartTriggerConfiguration:[m_readerInfo getReaderID] aStartTriggeConfig:triggerConfig aStatusMessage:&error_response];
         
         if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
             break;
@@ -817,14 +816,14 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
     return config;
 }
 
-- (void)setStopTriggerConfiguration:(srfidStopTriggerConfig*)config
+- (void)setStopTriggerConfiguration:(srfidStopTriggerConfig*)triggerConfig
 {
     SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
     NSString *error_response = nil;
     
     for(int i = 0; i < ZT_MAX_RETRY; i++)
     {
-        srfid_result = [m_RfidSdkApi srfidSetStopTriggerConfiguration:[m_readerInfo getReaderID] aStopTriggeConfig:config aStatusMessage:&error_response];
+        srfid_result = [m_RfidSdkApi srfidSetStopTriggerConfiguration:[m_readerInfo getReaderID] aStopTriggeConfig:triggerConfig aStatusMessage:&error_response];
         
         if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
             break;
@@ -887,14 +886,14 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
     return reportCofiguration;
 }
 
-- (void)setTagReportConfiguration:(srfidTagReportConfig*)config
+- (void)setTagReportConfiguration:(srfidTagReportConfig*)reportConfig
 {
     SRFID_RESULT srfid_result = SRFID_RESULT_FAILURE;
     NSString *error_response = nil;
     
     for(int i = 0; i < ZT_MAX_RETRY; i++)
     {
-        srfid_result = [m_RfidSdkApi srfidSetTagReportConfiguration:[m_readerInfo getReaderID]  aTagReportConfig:config aStatusMessage:&error_response];
+        srfid_result = [m_RfidSdkApi srfidSetTagReportConfiguration:[m_readerInfo getReaderID]  aTagReportConfig:reportConfig aStatusMessage:&error_response];
         
         if ((srfid_result != SRFID_RESULT_RESPONSE_TIMEOUT) && (srfid_result != SRFID_RESULT_FAILURE)) {
             break;
@@ -999,6 +998,8 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
 
 - (void)srfidEventCommunicationSessionEstablished:(srfidReaderInfo *)activeReader
 {
+    m_readerInfo = activeReader;
+    
     /* establish an ASCII protocol level connection */
     NSString *password = @"";
     SRFID_RESULT result = [m_RfidSdkApi srfidEstablishAsciiConnection:[m_readerInfo getReaderID] aPassword:password];
@@ -1006,8 +1007,6 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
     NSString* error = nil;
     if (SRFID_RESULT_SUCCESS == result)
     {
-        m_readerInfo = activeReader;
-        
         [self defaultConfiguration];
         
         RCTLogInfo(@"%@%@ has connected\n", LOG, [activeReader getReaderName]);
@@ -1024,7 +1023,7 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
     if (hasListeners)
     {
         // Only send events if anyone is listening
-        [self sendEventWithName: READER_STATUS body:@{@"status": error == nil ? @YES : @NO, error: error}];
+        [self sendEventWithName: READER_STATUS body:@{@"status": error == nil ? @YES : @NO, @"error": error == nil ? @"" : error}];
     }
 }
 
@@ -1032,6 +1031,12 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
 {
     [m_readerInfo setActive: NO];
     RCTLogInfo(@"%@RFID reader has disconnected: ID = %d\n", LOG, readerID);
+    
+    if (hasListeners)
+    {
+        // Only send events if anyone is listening
+        [self sendEventWithName: READER_STATUS body:@{@"status": @NO}];
+    }
 }
 
 - (void)srfidEventReaderAppeared:(srfidReaderInfo *)availableReader
@@ -1052,6 +1057,7 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
 - (void)srfidEventProximityNotify:(int)readerID aProximityPercent:(int)proximityPercent
 {
     //    RCTLogInfo(@"%@srfidEventProximityNotify: %d\n", LOG, proximityPercent);
+    
     if (hasListeners)
     {
         // Only send events if anyone is listening
@@ -1061,11 +1067,25 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
 
 - (void)srfidEventReadNotify:(int)readerID aTagData:(srfidTagData *)tagData
 {
-    //    RCTLogInfo(@"%@srfidEventReadNotify: %@\n", LOG, tagData.getTagId);
+    int rssi = [tagData getPeakRSSI];
+    
     if (hasListeners)
     {
         // Only send events if anyone is listening
-        [self sendEventWithName: TAG body:@{@"tag": tagData.getTagId}];
+        if(isSingleRead)
+        {
+            if(rssi > -40)
+            {
+                [self sendEventWithName: TAG body:@{@"tag": tagData.getTagId}];
+            }
+        }
+        else
+        {
+            if(([self addTagToList:[tagData getTagId]]))
+            {
+                [self sendEventWithName: TAG body:@{@"tag": tagData.getTagId}];
+            }
+        }
     }
 }
 
@@ -1090,6 +1110,124 @@ RCT_EXPORT_METHOD(setSingleRead: (BOOL) enable resolver:(RCTPromiseResolveBlock)
         // Only send events if anyone is listening
         [self sendEventWithName: TRIGGER_STATUS body:@{@"status": triggerEvent == SRFID_TRIGGEREVENT_PRESSED ? @YES : @NO}];
     }
+}
+
+#pragma mark - String values return
+
+- (BOOL) addTagToList: (NSString*) strEPC
+{
+    if(strEPC != nil){
+        if(![cacheTags containsObject:strEPC])
+        {
+            [cacheTags addObject:strEPC];
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+- (NSString*)stringOfRfidStatusEvent:(SRFID_EVENT_STATUS)event
+{
+    if (SRFID_EVENT_STATUS_OPERATION_START == event)
+    {
+        return @"EVENT_OPERATION_START";
+    }
+    else if (SRFID_EVENT_STATUS_OPERATION_STOP == event)
+    {
+        return @"EVENT_OPERATION_STOP";
+    }
+    else if (SRFID_EVENT_STATUS_OPERATION_BATCHMODE == event)
+    {
+        return @"EVENT_BATCH_MODE";
+    }
+    else if (SRFID_EVENT_STATUS_OPERATION_END_SUMMARY == event)
+    {
+        return @"EVENT_OPERATION_END_SUMMARY";
+    }
+    else if (SRFID_EVENT_STATUS_TEMPERATURE == event)
+    {
+        return @"EVENT_TEMPERATURE";
+    }
+    else if (SRFID_EVENT_STATUS_POWER == event)
+    {
+        return @"EVENT_POWER";
+    }
+    else if (SRFID_EVENT_STATUS_DATABASE == event)
+    {
+        return @"EVENT_DATABASE";
+    }
+    
+    return @"EVENT_UNKNOWN";
+}
+
+- (NSString*)stringOfRfidMemoryBank:(SRFID_MEMORYBANK)mem_bank
+{
+    if (SRFID_MEMORYBANK_EPC == mem_bank)
+    {
+        return @"EPC";
+    }
+    else if (SRFID_MEMORYBANK_RESV == mem_bank)
+    {
+        return @"RESV";
+    }
+    else if (SRFID_MEMORYBANK_TID == mem_bank)
+    {
+        return @"TID";
+    }
+    else if (SRFID_MEMORYBANK_USER == mem_bank)
+    {
+        return @"USER";
+    }
+    
+    return @"None";
+}
+
+- (NSString*)stringOfRfidSlFlag:(SRFID_SLFLAG)sl_flag
+{
+    switch (sl_flag)
+    {
+        case SRFID_SLFLAG_ASSERTED:
+            return @"ASSERTED";
+        case SRFID_SLFLAG_DEASSERTED:
+            return @"DEASSERTED";
+        case SRFID_SLFLAG_ALL:
+            return @"ALL";
+    }
+    
+    return @"Unknown";
+}
+
+- (NSString*)stringOfRfidSession:(SRFID_SESSION)session
+{
+    switch (session)
+    {
+        case SRFID_SESSION_S1:
+            return @"S1";
+        case SRFID_SESSION_S2:
+            return @"S2";
+        case SRFID_SESSION_S3:
+            return @"S3";
+        case SRFID_SESSION_S0:
+            return @"S0";
+    }
+    
+    return @"Unknown";
+}
+
+- (NSString*)stringOfRfidInventoryState:(SRFID_INVENTORYSTATE)state
+{
+    switch (state)
+    {
+        case SRFID_INVENTORYSTATE_A:
+            return @"STATE A";
+        case SRFID_INVENTORYSTATE_B:
+            return @"STATE B";
+        case SRFID_INVENTORYSTATE_AB_FLIP:
+            return @"STATE AB FLIP";
+    }
+    
+    return @"Unknown";
 }
 
 @end
