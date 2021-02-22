@@ -194,7 +194,7 @@ RCT_EXPORT_METHOD(setEnabled : (BOOL) enable resolver:(RCTPromiseResolveBlock)re
     
     /* Set DPO configuration */
     srfidDynamicPowerConfig *dpoConfig = [self getDpoConfiguration];
-    [dpoConfig setDynamicPowerOptimizationEnabled:YES];
+    [dpoConfig setDynamicPowerOptimizationEnabled:NO];
     [self setDpoConfiguration:dpoConfig];
     
     /* Set antenna configuration */
@@ -212,7 +212,7 @@ RCT_EXPORT_METHOD(setEnabled : (BOOL) enable resolver:(RCTPromiseResolveBlock)re
     
     /* Set trigger configuration */
     srfidStartTriggerConfig *startConfig = [self getStartTriggerConfiguration];
-    [startConfig setStartOnHandheldTrigger:YES];
+    [startConfig setStartOnHandheldTrigger:NO];
     [startConfig setTriggerType:SRFID_TRIGGERTYPE_PRESS];
     [startConfig setRepeatMonitoring:NO];
     [startConfig setStartDelay:0];
@@ -220,10 +220,16 @@ RCT_EXPORT_METHOD(setEnabled : (BOOL) enable resolver:(RCTPromiseResolveBlock)re
     
     /* configure stop triggers parameters to stop on physical trigger release or on 25 sec timeout*/
     srfidStopTriggerConfig *stopConfig = [self getStopTriggerConfiguration];
-    [stopConfig setStopOnHandheldTrigger:YES];
+    [stopConfig setStopOnHandheldTrigger:NO];
     [stopConfig setTriggerType:SRFID_TRIGGERTYPE_RELEASE];
-    [stopConfig setStopOnTimeout:YES];
-    [stopConfig setStopTimout:(25*1000)];
+    [stopConfig setStopOnTagCount:NO];
+    [stopConfig setStopTagCount:0];
+    [stopConfig setStopOnTimeout:NO];
+    [stopConfig setStopTimout:0];
+    [stopConfig setStopOnInventoryCount:NO];
+    [stopConfig setStopInventoryCount:0];
+    [stopConfig setStopOnAccessCount:NO];
+    [stopConfig setStopAccessCount:0];
     [self setStopTriggerConfiguration:stopConfig];
     
     /* Set tag report configuration */
@@ -270,35 +276,37 @@ RCT_EXPORT_METHOD(setEnabled : (BOOL) enable resolver:(RCTPromiseResolveBlock)re
         [settings setInteger:op_mode forKey: @"ZtSymbolRfidAppCfgOpMode"];
     }
     
-    /* subscribe for tag data and operation status related events */
-    [m_RfidSdkApi srfidSubsribeForEvents:(SRFID_EVENT_MASK_READ |
-                                          SRFID_EVENT_MASK_STATUS)];
-    
-    /* subscribe for battery and hand-held trigger related events */
-    [m_RfidSdkApi srfidSubsribeForEvents:(SRFID_EVENT_MASK_BATTERY |
-                                          SRFID_EVENT_MASK_TRIGGER)];
+    int notifications_mask = SRFID_EVENT_READER_APPEARANCE | SRFID_EVENT_READER_DISAPPEARANCE | SRFID_EVENT_SESSION_ESTABLISHMENT | SRFID_EVENT_SESSION_TERMINATION;
     
     /* configuring SDK to communicate with RFID readers in BT MFi mode */
     [m_RfidSdkApi srfidSetOperationalMode:op_mode];
     
-    /* subscribe for connectivity related events */
-    [m_RfidSdkApi srfidSubsribeForEvents:(SRFID_EVENT_READER_APPEARANCE |
-                                          SRFID_EVENT_READER_DISAPPEARANCE)];
+    [m_RfidSdkApi srfidSubsribeForEvents:notifications_mask];
     
-    /* configuring SDK to detect appearance and disappearance of available RFID readers */
+    [m_RfidSdkApi srfidSubsribeForEvents:(SRFID_EVENT_MASK_READ | SRFID_EVENT_MASK_STATUS | SRFID_EVENT_MASK_STATUS_OPERENDSUMMARY)];
+    
+    [m_RfidSdkApi srfidSubsribeForEvents:(SRFID_EVENT_MASK_TEMPERATURE | SRFID_EVENT_MASK_POWER | SRFID_EVENT_MASK_DATABASE)];
+    
+    [m_RfidSdkApi srfidSubsribeForEvents:(SRFID_EVENT_MASK_PROXIMITY)];
+    [m_RfidSdkApi srfidSubsribeForEvents:(SRFID_EVENT_MASK_TRIGGER)];
+    [m_RfidSdkApi srfidSubsribeForEvents:(SRFID_EVENT_MASK_BATTERY)];
     [m_RfidSdkApi srfidEnableAvailableReadersDetection:YES];
-    
-    /* subscribe for connectivity related events */
-    [m_RfidSdkApi srfidSubsribeForEvents:(SRFID_EVENT_SESSION_ESTABLISHMENT |
-                                          SRFID_EVENT_SESSION_TERMINATION)];
-    
-    /* enable automatic communication session reestablishment */
     [m_RfidSdkApi srfidEnableAutomaticSessionReestablishment:YES];
     
-    /* subscribe for tag locationing related events */
-    [m_RfidSdkApi srfidSubsribeForEvents:SRFID_EVENT_MASK_PROXIMITY];
-    
     RCTLogInfo(@"%@Initialize Listeners Finished\n", LOG);
+}
+
+- (BOOL) addTagToList: (NSString*) strEPC
+{
+    if(strEPC != nil){
+        if(![cacheTags containsObject:strEPC])
+        {
+            [cacheTags addObject:strEPC];
+            return true;
+        }
+    }
+    
+    return false;
 }
 
 #pragma mark - device management
@@ -991,6 +999,90 @@ RCT_EXPORT_METHOD(setEnabled : (BOOL) enable resolver:(RCTPromiseResolveBlock)re
     }
 }
 
+#pragma mark - reading command
+
+- (void) sdkStartInventory
+{
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0) , ^{
+        if(self->m_RfidSdkApi != nil)
+        {
+            NSString *error_response = nil;
+            SRFID_MEMORYBANK memoryBankId = SRFID_MEMORYBANK_EPC;
+            srfidAccessConfig *accessConfig = [[srfidAccessConfig alloc] init];
+            srfidReportConfig *reportConfig = [[srfidReportConfig alloc] init];
+            //        srfidAntennaConfiguration *antennaConfig = [self getAntennaConfiguration];
+            
+            /* configure report parameters to report RSSI only */
+            [reportConfig setIncPC:NO];
+            [reportConfig setIncPhase:NO];
+            [reportConfig setIncChannelIndex:NO];
+            [reportConfig setIncRSSI:YES];
+            [reportConfig setIncTagSeenCount:NO];
+            [reportConfig setIncFirstSeenTime:NO];
+            [reportConfig setIncLastSeenTime:NO];
+            
+            //        [accessConfig setPower:[antennaConfig getPower]];
+            [accessConfig setDoSelect:NO];
+            SRFID_RESULT srfid_result;
+            
+            srfid_result = [self->m_RfidSdkApi srfidStartInventory:[self->m_readerInfo getReaderID]
+                                                 aMemoryBank:memoryBankId
+                                               aReportConfig:reportConfig
+                                               aAccessConfig:accessConfig
+                                              aStatusMessage:&error_response];
+            
+            if(srfid_result == SRFID_RESULT_SUCCESS)
+            {
+                error_response = nil;
+            }
+            else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+            {
+                RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+            }
+            else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+            {
+                RCTLogInfo(@"%@Problem with reader connection", LOG);
+            }
+            
+            if(error_response != nil)
+            {
+                @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+            }
+        }
+        
+    });
+}
+
+- (void) sdkStopInventory
+{
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        if (self->m_RfidSdkApi != nil)
+        {
+            NSString *error_response = nil;
+            
+            SRFID_RESULT srfid_result = [self->m_RfidSdkApi srfidStopInventory:[self->m_readerInfo getReaderID] aStatusMessage:&error_response];
+            
+            if(srfid_result == SRFID_RESULT_SUCCESS)
+            {
+                error_response = nil;
+            }
+            else if(srfid_result == SRFID_RESULT_RESPONSE_ERROR)
+            {
+                RCTLogInfo(@"%@Error response from RFID reader: %@\n", LOG, error_response);
+            }
+            else if(srfid_result == SRFID_RESULT_FAILURE || srfid_result == SRFID_RESULT_RESPONSE_TIMEOUT)
+            {
+                RCTLogInfo(@"%@Problem with reader connection", LOG);
+            }
+            
+            if(error_response != nil)
+            {
+                @throw([NSException exceptionWithName: ERROR reason: error_response userInfo: nil]);
+            }
+        }
+    });
+}
+
 #pragma mark - delegate protocol implementation
 /* ###################################################################### */
 /* ########## IRfidSdkApiDelegate Protocol implementation ############### */
@@ -1068,7 +1160,8 @@ RCT_EXPORT_METHOD(setEnabled : (BOOL) enable resolver:(RCTPromiseResolveBlock)re
 - (void)srfidEventReadNotify:(int)readerID aTagData:(srfidTagData *)tagData
 {
     int rssi = [tagData getPeakRSSI];
-    
+    RCTLogInfo(@"Tag: %@ RSSI: %@", [tagData getTagId], @([tagData getPeakRSSI]));
+
     if (hasListeners)
     {
         // Only send events if anyone is listening
@@ -1076,14 +1169,14 @@ RCT_EXPORT_METHOD(setEnabled : (BOOL) enable resolver:(RCTPromiseResolveBlock)re
         {
             if(rssi > -40)
             {
-                [self sendEventWithName: TAG body:@{@"tag": tagData.getTagId}];
+                [self sendEventWithName: TAG body: [tagData getTagId]];
             }
         }
         else
         {
             if(([self addTagToList:[tagData getTagId]]))
             {
-                [self sendEventWithName: TAG body:@{@"tag": tagData.getTagId}];
+                [self sendEventWithName: TAG body: [tagData getTagId]];
             }
         }
     }
@@ -1098,10 +1191,12 @@ RCT_EXPORT_METHOD(setEnabled : (BOOL) enable resolver:(RCTPromiseResolveBlock)re
 {
     if(triggerEvent == SRFID_TRIGGEREVENT_PRESSED)
     {
+        [self sdkStartInventory];
         RCTLogInfo(@"%@srfidEventTriggerNotify Pressed", LOG);
     }
     else
     {
+        [self sdkStopInventory];
         RCTLogInfo(@"%@srfidEventTriggerNotify Released", LOG);
     }
     
@@ -1113,19 +1208,6 @@ RCT_EXPORT_METHOD(setEnabled : (BOOL) enable resolver:(RCTPromiseResolveBlock)re
 }
 
 #pragma mark - String values return
-
-- (BOOL) addTagToList: (NSString*) strEPC
-{
-    if(strEPC != nil){
-        if(![cacheTags containsObject:strEPC])
-        {
-            [cacheTags addObject:strEPC];
-            return true;
-        }
-    }
-    
-    return false;
-}
 
 - (NSString*)stringOfRfidStatusEvent:(SRFID_EVENT_STATUS)event
 {
