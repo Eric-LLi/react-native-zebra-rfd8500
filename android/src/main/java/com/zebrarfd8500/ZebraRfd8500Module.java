@@ -44,13 +44,12 @@ import com.zebra.rfid.api3.TagData;
 import com.zebra.rfid.api3.TriggerInfo;
 
 import java.util.ArrayList;
-import java.util.Objects;
 
 public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements LifecycleEventListener, Readers.RFIDReaderEventHandler, RfidEventsListener {
 
 	private final ReactApplicationContext reactContext;
 
-	private final String LOG = "ZEBRA";
+	private final String LOG = "[RFD8500] ";
 	private final String READER_STATUS = "READER_STATUS";
 	private final String TRIGGER_STATUS = "TRIGGER_STATUS";
 	private final String WRITE_TAG_STATUS = "WRITE_TAG_STATUS";
@@ -99,6 +98,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
 	@Override
 	public void onHostDestroy() {
+//		doDisconnect();
 		dispose();
 	}
 
@@ -181,6 +181,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 	@ReactMethod
 	public void isConnected(Promise promise) {
 		Log.d(LOG, "isConnected");
+
 		if (reader != null) {
 			promise.resolve(reader.isConnected());
 		} else {
@@ -191,6 +192,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 	@ReactMethod
 	public void getDevices(Promise promise) {
 		Log.d(LOG, "getDevices");
+
 		try {
 			if (readers == null) {
 				init();
@@ -214,10 +216,12 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
 	@ReactMethod
 	public void disconnect(Promise promise) {
+		Log.d(LOG, "disconnect");
+
 		if (reader != null && reader.isConnected()) {
 			doDisconnect();
 
-			dispose();
+//			dispose();
 		}
 
 		promise.resolve(true);
@@ -225,10 +229,12 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
 	@ReactMethod
 	public void connect(String name, Promise promise) {
+		Log.d(LOG, "connect");
+
 		try {
-			if (reader != null && reader.isConnected()) {
-				doDisconnect();
-			}
+//			if (reader != null && reader.isConnected()) {
+//				doDisconnect();
+//			}
 
 			if (readers == null) {
 				init();
@@ -243,12 +249,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 				}
 			}
 
-			String error = doConnect();
-
-			WritableMap map = Arguments.createMap();
-			map.putBoolean("status", error == null);
-			map.putString("error", error);
-			sendEvent(READER_STATUS, map);
+			doConnect();
 		} catch (Exception error) {
 			promise.reject(error);
 		}
@@ -256,6 +257,8 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
 	@ReactMethod
 	public void getDeviceDetails(Promise promise) {
+		Log.d(LOG, "getDeviceDetails");
+
 		if (reader != null && reader.isConnected()) {
 			try {
 				Antennas.AntennaRfConfig antennaRFConfig = reader.Config.Antennas.getAntennaRfConfig(1);
@@ -280,18 +283,22 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
 	@ReactMethod
 	public void clear() {
+		Log.d(LOG, "clear");
+
 		cacheTags = new ArrayList<>();
 	}
 
 	@ReactMethod
-	public void setSingleRead(boolean state) {
+	public void setSingleRead(boolean enable) {
 		Log.d(LOG, "setSingleRead");
 
-		isSingleRead = state;
+		isSingleRead = enable;
 	}
 
 	@ReactMethod
 	public void setAntennaLevel(int antennaLevel, Promise promise) {
+		Log.d(LOG, "setAntennaLevel");
+
 		if (reader != null && reader.isConnected()) {
 			Antennas.AntennaRfConfig antennaRfConfig = null;
 			try {
@@ -315,6 +322,8 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
 	@ReactMethod
 	public void programTag(String oldTag, String newTag, Promise promise) {
+		Log.d(LOG, "programTag");
+
 		if (reader != null && reader.isConnected()) {
 			if (oldTag != null && newTag != null) {
 				try {
@@ -359,6 +368,8 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
 	@ReactMethod
 	public void setEnabled(boolean enable, Promise promise) {
+		Log.d(LOG, "setEnabled");
+
 		if (reader != null && reader.isConnected()) {
 			reader.Events.setTagReadEvent(enable);
 		}
@@ -367,6 +378,8 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 	}
 
 	private void init() {
+		Log.d(LOG, "init");
+
 		if (readers == null) {
 			readers = new Readers(this.reactContext, ENUM_TRANSPORT.BLUETOOTH);
 			readers.attach(this);
@@ -374,6 +387,8 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 	}
 
 	private void dispose() {
+		Log.d(LOG, "dispose");
+
 		try {
 			if (readers != null) {
 				reader = null;
@@ -386,47 +401,56 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 		}
 	}
 
-	private String doConnect() {
-		if (reader != null) {
-			Log.d(LOG, "connect " + reader.getHostName());
-			try {
-				if (!reader.isConnected()) {
-					// Establish connection to the RFID Reader
-					reader.connect();
-					ConfigureReader();
-					return null;
-				}
-			} catch (InvalidUsageException e) {
-				e.printStackTrace();
-			} catch (OperationFailureException e) {
-				e.printStackTrace();
-				if (e.getResults() == RFIDResults.RFID_READER_REGION_NOT_CONFIGURED) {
+	private void doConnect() {
+		if (reader != null && !reader.isConnected()) {
+			new Thread(new Runnable() {
+				@Override
+				public void run() {
+					String error = "Connection failed";
 					try {
-						RegulatoryConfig regulatoryConfig = reader.Config.getRegulatoryConfig();
+						// Establish connection to the RFID Reader
+						reader.connect();
+						ConfigureReader();
 
-						SupportedRegions regions = reader.ReaderCapabilities.SupportedRegions;
-						int len = regions.length();
-						for (int i = 0; i < len; i++) {
-							RegionInfo regionInfo = regions.getRegionInfo(i);
-							if ("AUS".equals(regionInfo.getRegionCode())) {
-								regulatoryConfig.setRegion(regionInfo.getRegionCode());
-								reader.Config.setRegulatoryConfig(regulatoryConfig);
-								Log.d("RFID", "Region set to " + regionInfo.getName());
+						Log.d(LOG, reader.getHostName() + " is connected");
+						error = null;
+
+					} catch (InvalidUsageException e) {
+						e.printStackTrace();
+					} catch (OperationFailureException e) {
+						e.printStackTrace();
+						if (e.getResults() == RFIDResults.RFID_READER_REGION_NOT_CONFIGURED) {
+							try {
+								RegulatoryConfig regulatoryConfig = reader.Config.getRegulatoryConfig();
+
+								SupportedRegions regions = reader.ReaderCapabilities.SupportedRegions;
+								int len = regions.length();
+								for (int i = 0; i < len; i++) {
+									RegionInfo regionInfo = regions.getRegionInfo(i);
+									if ("AUS".equals(regionInfo.getRegionCode())) {
+										regulatoryConfig.setRegion(regionInfo.getRegionCode());
+										reader.Config.setRegulatoryConfig(regulatoryConfig);
+										Log.d("RFID", "Region set to " + regionInfo.getName());
+									}
+								}
+							} catch (InvalidUsageException | OperationFailureException invalidUsageException) {
+								invalidUsageException.printStackTrace();
 							}
+						} else {
+							error = e.getResults().toString();
 						}
-					} catch (InvalidUsageException | OperationFailureException invalidUsageException) {
-						invalidUsageException.printStackTrace();
+					} catch (Exception e) {
+						e.printStackTrace();
+						error = e.getMessage();
 					}
-				} else {
-					return e.getResults().toString();
-				}
-			} catch (Exception e) {
-				e.printStackTrace();
-				return e.getMessage();
-			}
-		}
 
-		return "Connection failed";
+					WritableMap map = Arguments.createMap();
+					map.putBoolean("status", error == null);
+					map.putString("error", error);
+					sendEvent(READER_STATUS, map);
+				}
+			}).start();
+		}
 	}
 
 	private void doDisconnect() {
@@ -436,7 +460,21 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 			try {
 				reader.Events.removeEventsListener(this);
 
-				reader.disconnect();
+				new Thread(new Runnable() {
+					@Override
+					public void run() {
+						try {
+							reader.disconnect();
+						} catch (InvalidUsageException | OperationFailureException e) {
+							e.printStackTrace();
+						}
+						Log.d(LOG, reader.getHostName() + "is disconnected ");
+						WritableMap map = Arguments.createMap();
+						map.putBoolean("status", false);
+						sendEvent(READER_STATUS, map);
+					}
+				}).start();
+
 			} catch (InvalidUsageException | OperationFailureException e) {
 				e.printStackTrace();
 			}
@@ -444,7 +482,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 	}
 
 	private void ConfigureReader() throws Exception {
-		Log.d("ConfigureReader", "ConfigureReader " + reader.getHostName());
+
 		if (reader.isConnected()) {
 //			reader.Config.resetFactoryDefaults();
 
@@ -499,6 +537,8 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 			reader.Config.Antennas.setSingulationControl(1, s1_singulationControl);
 			// delete any prefilters
 			reader.Actions.PreFilters.deleteAll();
+
+			Log.d("ConfigureReader", "Default ConfigureReader Finished" + reader.getHostName());
 		}
 	}
 
@@ -531,14 +571,4 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 		}
 		return false;
 	}
-
-//	private boolean checkIsExisted(String strEPC) {
-//		for (int i = 0; i < cacheTags.size(); i++) {
-//			String tag = cacheTags.get(i);
-//			if (strEPC != null && strEPC.equals(tag)) {
-//				return true;
-//			}
-//		}
-//		return false;
-//	}
 }
