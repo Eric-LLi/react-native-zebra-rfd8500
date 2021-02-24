@@ -76,19 +76,21 @@ RCT_EXPORT_METHOD(connect: (NSString *)name resover:(RCTPromiseResolveBlock)reso
                 if([[reader getReaderName] isEqualToString:name])
                 {
                     /* establish logical communication session */
-                    NSString* error = [self doConnect: [reader getReaderID]];
-                    if(error != nil)
-                    {
-                        reject(ERROR, error, nil);
-                    }
+                    [self doConnect: [reader getReaderID]];
                 }
             }
         }
     }
-    else
+}
+
+RCT_EXPORT_METHOD(reconnect: (RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+{
+    if(m_readerInfo && ![m_readerInfo isActive])
     {
-        resolve(@YES);
+        [self doConnect:[m_readerInfo getReaderID]];
     }
+    
+    resolve(@YES);
 }
 
 RCT_EXPORT_METHOD(disconnect: (RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
@@ -290,8 +292,8 @@ RCT_EXPORT_METHOD(setEnabled : (BOOL) enable resolver:(RCTPromiseResolveBlock)re
     [m_RfidSdkApi srfidSubsribeForEvents:(SRFID_EVENT_MASK_PROXIMITY)];
     [m_RfidSdkApi srfidSubsribeForEvents:(SRFID_EVENT_MASK_TRIGGER)];
     [m_RfidSdkApi srfidSubsribeForEvents:(SRFID_EVENT_MASK_BATTERY)];
-    [m_RfidSdkApi srfidEnableAvailableReadersDetection:YES];
-    [m_RfidSdkApi srfidEnableAutomaticSessionReestablishment:YES];
+    [m_RfidSdkApi srfidEnableAvailableReadersDetection:NO];
+    [m_RfidSdkApi srfidEnableAutomaticSessionReestablishment:NO];
     
     RCTLogInfo(@"%@Initialize Listeners Finished\n", LOG);
 }
@@ -361,32 +363,41 @@ RCT_EXPORT_METHOD(setEnabled : (BOOL) enable resolver:(RCTPromiseResolveBlock)re
     return readers;
 }
 
-- (NSString* )doConnect:(int)reader_id
+- (void)doConnect:(int)reader_id
 {
-    NSString* error_response = nil;
-    
-    if (m_RfidSdkApi != nil)
-    {
-        SRFID_RESULT conn_result = [m_RfidSdkApi srfidEstablishCommunicationSession:reader_id];
-        /*Setting batch mode to default after connect and will be set back if and when event is received*/
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0) , ^{
+        NSString* error_response = nil;
         
-        if (SRFID_RESULT_SUCCESS != conn_result)
+        if (self->m_RfidSdkApi != nil && ![self->m_readerInfo isActive])
         {
-            error_response = @"Connection failed";
+            SRFID_RESULT conn_result = [self->m_RfidSdkApi srfidEstablishCommunicationSession:reader_id];
+            /*Setting batch mode to default after connect and will be set back if and when event is received*/
+            
+            if (SRFID_RESULT_SUCCESS != conn_result)
+            {
+                error_response = @"Connection failed";
+            }
         }
-    }
-    
-    return error_response;
+        
+        if(error_response != nil)
+        {
+            if (self->hasListeners)
+            {
+                // Only send events if anyone is listening
+                [self sendEventWithName: READER_STATUS body:@{@"status": @NO, @"error": error_response}];
+            }
+        }
+    });
 }
 
 - (void)doDisconnect:(int)reader_id
 {
-    if (m_RfidSdkApi != nil)
-    {
-        [m_RfidSdkApi srfidTerminateCommunicationSession:reader_id];
-        
-        //
-    }
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0) , ^{
+        if (self->m_RfidSdkApi != nil && [self->m_readerInfo isActive])
+        {
+            [self->m_RfidSdkApi srfidTerminateCommunicationSession:reader_id];
+        }
+    });
 }
 
 #pragma mark - settings request
