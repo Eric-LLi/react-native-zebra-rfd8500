@@ -88,17 +88,18 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
 	@Override
 	public void onHostResume() {
-		doConnect();
+//		doConnect();
 	}
 
 	@Override
 	public void onHostPause() {
-		doDisconnect();
+//		doDisconnect();
 	}
 
 	@Override
 	public void onHostDestroy() {
-//		doDisconnect();
+		doDisconnect();
+
 		dispose();
 	}
 
@@ -220,11 +221,14 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
 		if (reader != null && reader.isConnected()) {
 			doDisconnect();
-
-//			dispose();
 		}
 
 		promise.resolve(true);
+	}
+
+	@ReactMethod
+	public void reconnect() {
+		doConnect();
 	}
 
 	@ReactMethod
@@ -232,10 +236,6 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 		Log.d(LOG, "connect");
 
 		try {
-//			if (reader != null && reader.isConnected()) {
-//				doDisconnect();
-//			}
-
 			if (readers == null) {
 				init();
 			}
@@ -453,8 +453,28 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 		}
 	}
 
+	private void doReconnect() {
+		Log.d(LOG, "doReconnect " + reader);
+
+		if (reader != null) {
+			try {
+				reader.reconnect();
+
+				WritableMap map = Arguments.createMap();
+				map.putBoolean("status", true);
+				map.putString("error", null);
+				sendEvent(READER_STATUS, map);
+			} catch (InvalidUsageException | OperationFailureException e) {
+				WritableMap map = Arguments.createMap();
+				map.putBoolean("status", false);
+				map.putString("error", e.getMessage());
+				sendEvent(READER_STATUS, map);
+			}
+		}
+	}
+
 	private void doDisconnect() {
-		Log.d(LOG, "disconnect " + reader);
+		Log.d(LOG, "doDisconnect " + reader);
 
 		if (reader != null && reader.isConnected()) {
 			try {
@@ -463,20 +483,27 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 				new Thread(new Runnable() {
 					@Override
 					public void run() {
+						String error = null;
 						try {
 							reader.disconnect();
+							Log.d(LOG, reader.getHostName() + "is disconnected ");
+
 						} catch (InvalidUsageException | OperationFailureException e) {
-							e.printStackTrace();
+							error = e.getMessage();
 						}
-						Log.d(LOG, reader.getHostName() + "is disconnected ");
+
 						WritableMap map = Arguments.createMap();
 						map.putBoolean("status", false);
+						map.putString("error", error);
 						sendEvent(READER_STATUS, map);
 					}
 				}).start();
 
 			} catch (InvalidUsageException | OperationFailureException e) {
-				e.printStackTrace();
+				WritableMap map = Arguments.createMap();
+				map.putBoolean("status", false);
+				map.putString("error", e.getMessage());
+				sendEvent(READER_STATUS, map);
 			}
 		}
 	}

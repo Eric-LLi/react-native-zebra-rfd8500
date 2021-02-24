@@ -43,6 +43,8 @@ export declare function off(event: READER_EVENTS): void;
 
 export declare function connect(name: string): Promise<boolean>;
 
+export declare function reconnect(): void;
+
 export declare function disconnect(): Promise<void>;
 
 export declare function isConnected(): Promise<boolean>;
