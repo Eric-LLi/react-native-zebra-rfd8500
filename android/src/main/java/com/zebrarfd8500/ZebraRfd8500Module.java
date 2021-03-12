@@ -135,8 +135,9 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 				Log.d("RFID", "Tag ID = " + EPC);
 
 				if (isSingleRead) {
-					if (rssi > -40) {
+					if (rssi > -40 && addTagToList(EPC)) {
 						sendEvent(TAG, EPC);
+						cancel();
 					}
 				} else {
 					if (addTagToList(EPC)) {
@@ -352,7 +353,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 					}
 
 					WritableMap map = Arguments.createMap();
-					map.putBoolean("status", error != null);
+					map.putBoolean("status", error == null);
 					map.putString("error", error);
 					sendEvent(WRITE_TAG_STATUS, map);
 
