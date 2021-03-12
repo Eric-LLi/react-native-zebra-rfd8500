@@ -251,6 +251,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 			}
 
 			doConnect();
+			promise.resolve(true);
 		} catch (Exception error) {
 			promise.reject(error);
 		}
@@ -371,11 +372,21 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 	public void setEnabled(boolean enable, Promise promise) {
 		Log.d(LOG, "setEnabled");
 
-		if (reader != null && reader.isConnected()) {
-			reader.Events.setTagReadEvent(enable);
+		try {
+			if (reader != null && reader.isConnected()) {
+//				reader.Events.setTagReadEvent(enable);
+//				reader.Events.setInventoryStartEvent(enable);
+//				reader.Events.setInventoryStartEvent(enable);
+
+				reader.Config.setTriggerMode(enable ? ENUM_TRIGGER_MODE.RFID_MODE :
+						ENUM_TRIGGER_MODE.BARCODE_MODE, true);
+			}
+
+			promise.resolve(true);
+		} catch (Exception err) {
+			promise.reject(err);
 		}
 
-		promise.resolve(true);
 	}
 
 	private void init() {
