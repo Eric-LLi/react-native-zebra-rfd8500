@@ -7,6 +7,12 @@ export enum READER_EVENTS {
 	WRITE_TAG = 'WRITE_TAG',
 	TRIGGER_STATUS = 'TRIGGER_STATUS',
 	READER_STATUS = 'READER_STATUS',
+	BATTERY_STATUS = 'BATTERY_STATUS'
+}
+
+export type BatteryTypes = {
+	cause: string | null;
+	level: number;
 }
 
 export type DevicesTypes = {
@@ -34,8 +40,9 @@ type onTagResult = (tag: string) => void;
 type onProgramResult = (data: ProgramStatus) => void;
 type onTriggerStatus = (data: TriggerStatus) => void;
 type onLocateTagResult = (data: { distance: number }) => void;
+type onBatteryResult = (data: BatteryTypes) => void;
 
-export type Callbacks = onReaderStatus | onTagResult | onProgramResult | onTriggerStatus | onLocateTagResult;
+export type Callbacks = onReaderStatus | onTagResult | onProgramResult | onTriggerStatus | onLocateTagResult | onBatteryResult;
 
 export declare function on(event: READER_EVENTS, callback: Callbacks): void;
 

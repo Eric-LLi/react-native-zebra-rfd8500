@@ -1,6 +1,7 @@
 package com.zebrarfd8500;
 
 import android.util.Log;
+import android.widget.Toast;
 
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.LifecycleEventListener;
@@ -47,567 +48,575 @@ import java.util.ArrayList;
 
 public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements LifecycleEventListener, Readers.RFIDReaderEventHandler, RfidEventsListener {
 
-	private final ReactApplicationContext reactContext;
+    private final ReactApplicationContext reactContext;
 
-	private final String LOG = "[RFD8500] ";
-	private final String READER_STATUS = "READER_STATUS";
-	private final String TRIGGER_STATUS = "TRIGGER_STATUS";
-	private final String WRITE_TAG_STATUS = "WRITE_TAG_STATUS";
-	private final String TAG = "TAG";
-	private final String LOCATE_TAG = "LOCATE_TAG";
+    private final String LOG = "[RFD8500] ";
+    private final String READER_STATUS = "READER_STATUS";
+    private final String TRIGGER_STATUS = "TRIGGER_STATUS";
+    private final String WRITE_TAG_STATUS = "WRITE_TAG_STATUS";
+    private final String BATTERY_STATUS = "BATTERY_STATUS";
+    private final String TAG = "TAG";
+    private final String LOCATE_TAG = "LOCATE_TAG";
 
-	private static Readers readers;
-	private static ReaderDevice readerDevice;
-	private static RFIDReader reader;
-	private static ArrayList<String> cacheTags = new ArrayList<>();
+    private static Readers readers;
+    private static ReaderDevice readerDevice;
+    private static RFIDReader reader;
+    private static ArrayList<String> cacheTags = new ArrayList<>();
+    private static boolean isSingleRead = false;
 
-	private static boolean isSingleRead = false;
+    public ZebraRfd8500Module(ReactApplicationContext reactContext) {
+        super(reactContext);
+        this.reactContext = reactContext;
+        this.reactContext.addLifecycleEventListener(this);
+    }
 
-	public ZebraRfd8500Module(ReactApplicationContext reactContext) {
-		super(reactContext);
-		this.reactContext = reactContext;
-		this.reactContext.addLifecycleEventListener(this);
-	}
+    private void sendEvent(String eventName, WritableMap params) {
+        this.reactContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                .emit(eventName, params);
+    }
 
-	private void sendEvent(String eventName, WritableMap params) {
-		this.reactContext
-				.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-				.emit(eventName, params);
-	}
+    private void sendEvent(String eventName, String msg) {
+        this.reactContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                .emit(eventName, msg);
+    }
 
-	private void sendEvent(String eventName, String msg) {
-		this.reactContext
-				.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-				.emit(eventName, msg);
-	}
+    @Override
+    public String getName() {
+        return "ZebraRfd8500";
+    }
 
-	@Override
-	public String getName() {
-		return "ZebraRfd8500";
-	}
-
-	@Override
-	public void onHostResume() {
+    @Override
+    public void onHostResume() {
 //		doConnect();
-	}
+    }
 
-	@Override
-	public void onHostPause() {
+    @Override
+    public void onHostPause() {
 //		doDisconnect();
-	}
+    }
 
-	@Override
-	public void onHostDestroy() {
-		doDisconnect();
+    @Override
+    public void onHostDestroy() {
+        doDisconnect();
 
-		dispose();
-	}
+        dispose();
+    }
 
-	@Override
-	public void RFIDReaderAppeared(ReaderDevice readerDevice) {
-		Log.d(LOG, "RFIDReaderAppeared " + readerDevice.getName());
-	}
+    @Override
+    public void RFIDReaderAppeared(ReaderDevice readerDevice) {
+        Log.d(LOG, "RFIDReaderAppeared " + readerDevice.getName());
+    }
 
-	@Override
-	public void RFIDReaderDisappeared(ReaderDevice readerDevice) {
-		Log.d(LOG, "RFIDReaderDisappeared " + readerDevice.getName());
-		if (readerDevice.getName().equals(reader.getHostName()))
-			doDisconnect();
-	}
+    @Override
+    public void RFIDReaderDisappeared(ReaderDevice readerDevice) {
+        Log.d(LOG, "RFIDReaderDisappeared " + readerDevice.getName());
+        if (readerDevice.getName().equals(reader.getHostName()))
+            doDisconnect();
+    }
 
-	@Override
-	public void eventReadNotify(RfidReadEvents rfidReadEvents) {
-		// Recommended to use new method getReadTagsEx for better performance in case of large tag population
-		TagData[] myTags = reader.Actions.getReadTags(100);
+    @Override
+    public void eventReadNotify(RfidReadEvents rfidReadEvents) {
+        // Recommended to use new method getReadTagsEx for better performance in case of large tag population
+        TagData[] myTags = reader.Actions.getReadTags(100);
 
-		if (myTags != null) {
-			for (TagData myTag : myTags) {
-				Log.d(LOG, "Tag ID " + myTag.getTagID());
-				if (myTag.getOpCode() == ACCESS_OPERATION_CODE.ACCESS_OPERATION_READ &&
-						myTag.getOpStatus() == ACCESS_OPERATION_STATUS.ACCESS_SUCCESS) {
-					if (myTag.getMemoryBankData().length() > 0) {
-						Log.d(LOG, " Mem Bank Data " + myTag.getMemoryBankData());
-					}
-				}
+        if (myTags != null) {
+            for (TagData myTag : myTags) {
+                Log.d(LOG, "Tag ID " + myTag.getTagID());
+                if (myTag.getOpCode() == ACCESS_OPERATION_CODE.ACCESS_OPERATION_READ &&
+                        myTag.getOpStatus() == ACCESS_OPERATION_STATUS.ACCESS_SUCCESS) {
+                    if (myTag.getMemoryBankData().length() > 0) {
+                        Log.d(LOG, " Mem Bank Data " + myTag.getMemoryBankData());
+                    }
+                }
 
-				int rssi = myTag.getPeakRSSI();
-				String EPC = myTag.getTagID();
-				Log.d("RFID", "Tag ID = " + EPC);
+                int rssi = myTag.getPeakRSSI();
+                String EPC = myTag.getTagID();
+                Log.d("RFID", "Tag ID = " + EPC);
 
-				if (isSingleRead) {
-					if (rssi > -40 && addTagToList(EPC)) {
-						sendEvent(TAG, EPC);
-						cancel();
-					}
-				} else {
-					if (addTagToList(EPC)) {
-						sendEvent(TAG, EPC);
-					}
-				}
+                if (isSingleRead) {
+                    if (rssi > -40 && addTagToList(EPC)) {
+                        sendEvent(TAG, EPC);
+                        cancel();
+                    }
+                } else {
+                    if (addTagToList(EPC)) {
+                        sendEvent(TAG, EPC);
+                    }
+                }
 
-				if (myTag.isContainsLocationInfo()) {
-					short dist = myTag.LocationInfo.getRelativeDistance();
-					Log.d(LOG, "Tag relative distance " + dist);
-				}
-			}
-		}
-	}
+                if (myTag.isContainsLocationInfo()) {
+                    short dist = myTag.LocationInfo.getRelativeDistance();
+                    Log.d(LOG, "Tag relative distance " + dist);
+                }
+            }
+        }
+    }
 
-	@Override
-	public void eventStatusNotify(RfidStatusEvents rfidStatusEvents) {
-		if (rfidStatusEvents.StatusEventData.getStatusEventType() == STATUS_EVENT_TYPE.HANDHELD_TRIGGER_EVENT) {
-			if (rfidStatusEvents.StatusEventData.HandheldTriggerEventData.getHandheldEvent() == HANDHELD_TRIGGER_EVENT_TYPE.HANDHELD_TRIGGER_PRESSED) {
-				read();
-			} else if (rfidStatusEvents.StatusEventData.HandheldTriggerEventData.getHandheldEvent() == HANDHELD_TRIGGER_EVENT_TYPE.HANDHELD_TRIGGER_RELEASED) {
-				cancel();
-			}
+    @Override
+    public void eventStatusNotify(RfidStatusEvents rfidStatusEvents) {
+        if (rfidStatusEvents.StatusEventData.getStatusEventType() == STATUS_EVENT_TYPE.HANDHELD_TRIGGER_EVENT) {
+            if (rfidStatusEvents.StatusEventData.HandheldTriggerEventData.getHandheldEvent() == HANDHELD_TRIGGER_EVENT_TYPE.HANDHELD_TRIGGER_PRESSED) {
+                read();
+            } else if (rfidStatusEvents.StatusEventData.HandheldTriggerEventData.getHandheldEvent() == HANDHELD_TRIGGER_EVENT_TYPE.HANDHELD_TRIGGER_RELEASED) {
+                cancel();
+            }
 
-			WritableMap map = Arguments.createMap();
-			map.putBoolean("status", rfidStatusEvents.StatusEventData.HandheldTriggerEventData.getHandheldEvent() == HANDHELD_TRIGGER_EVENT_TYPE.HANDHELD_TRIGGER_PRESSED);
-			sendEvent(TRIGGER_STATUS, map);
-		}
+            WritableMap map = Arguments.createMap();
+            map.putBoolean("status", rfidStatusEvents.StatusEventData.HandheldTriggerEventData.getHandheldEvent() == HANDHELD_TRIGGER_EVENT_TYPE.HANDHELD_TRIGGER_PRESSED);
+            sendEvent(TRIGGER_STATUS, map);
+        }
 
-		if (rfidStatusEvents.StatusEventData.getStatusEventType() == STATUS_EVENT_TYPE.DISCONNECTION_EVENT) {
-			WritableMap map = Arguments.createMap();
-			map.putBoolean("status", false);
-			sendEvent(READER_STATUS, map);
-		}
+        if (rfidStatusEvents.StatusEventData.getStatusEventType() == STATUS_EVENT_TYPE.DISCONNECTION_EVENT) {
+            WritableMap map = Arguments.createMap();
+            map.putBoolean("status", false);
+            sendEvent(READER_STATUS, map);
+        }
 
-		if (rfidStatusEvents.StatusEventData.getStatusEventType() == STATUS_EVENT_TYPE.BATTERY_EVENT) {
-//			WritableMap map = Arguments.createMap();
-//			map.putBoolean("status", false);
-//			sendEvent(READER_STATUS, map);
-		}
-	}
+        if (rfidStatusEvents.StatusEventData.getStatusEventType() == STATUS_EVENT_TYPE.BATTERY_EVENT) {
+            WritableMap map = Arguments.createMap();
+            map.putInt("level", (int) rfidStatusEvents.StatusEventData.BatteryData.getLevel());
+            map.putString("cause", rfidStatusEvents.StatusEventData.BatteryData.getCause());
+            sendEvent(BATTERY_STATUS, map);
+        }
 
-	@ReactMethod
-	public void isConnected(Promise promise) {
-		Log.d(LOG, "isConnected");
+        if (rfidStatusEvents.StatusEventData.getStatusEventType() == STATUS_EVENT_TYPE.TEMPERATURE_ALARM_EVENT) {
+//            temperature = rfidStatusEvents.StatusEventData.TemperatureAlarmData.getCurrentTemperature();
+        }
+    }
 
-		if (reader != null) {
-			promise.resolve(reader.isConnected());
-		} else {
-			promise.resolve(false);
-		}
-	}
+    @ReactMethod
+    public void isConnected(Promise promise) {
+        Log.d(LOG, "isConnected");
 
-	@ReactMethod
-	public void getDevices(Promise promise) {
-		Log.d(LOG, "getDevices");
+        if (reader != null) {
+            promise.resolve(reader.isConnected());
+        } else {
+            promise.resolve(false);
+        }
+    }
 
-		try {
-			if (readers == null) {
-				init();
-			}
+    @ReactMethod
+    public void getDevices(Promise promise) {
+        Log.d(LOG, "getDevices");
 
-			ArrayList<ReaderDevice> devices = readers.GetAvailableRFIDReaderList();
+        try {
+            if (readers == null) {
+                init();
+            }
 
-			WritableArray deviceList = Arguments.createArray();
-			for (ReaderDevice device : devices) {
-				WritableMap map = Arguments.createMap();
-				map.putString("name", device.getName());
-				map.putString("mac", device.getAddress());
-				deviceList.pushMap(map);
-			}
+            ArrayList<ReaderDevice> devices = readers.GetAvailableRFIDReaderList();
 
-			promise.resolve(deviceList);
-		} catch (InvalidUsageException e) {
-			promise.reject(e);
-		}
-	}
+            WritableArray deviceList = Arguments.createArray();
+            for (ReaderDevice device : devices) {
+                WritableMap map = Arguments.createMap();
+                map.putString("name", device.getName());
+                map.putString("mac", device.getAddress());
+                deviceList.pushMap(map);
+            }
 
-	@ReactMethod
-	public void disconnect(Promise promise) {
-		Log.d(LOG, "disconnect");
+            promise.resolve(deviceList);
+        } catch (InvalidUsageException e) {
+            promise.reject(e);
+        }
+    }
 
-		if (reader != null && reader.isConnected()) {
-			doDisconnect();
-		}
+    @ReactMethod
+    public void disconnect(Promise promise) {
+        Log.d(LOG, "disconnect");
 
-		promise.resolve(true);
-	}
+        if (reader != null && reader.isConnected()) {
+            doDisconnect();
+        }
 
-	@ReactMethod
-	public void reconnect() {
-		doConnect();
-	}
+        promise.resolve(true);
+    }
 
-	@ReactMethod
-	public void connect(String name, Promise promise) {
-		Log.d(LOG, "connect");
+    @ReactMethod
+    public void reconnect() {
+        doConnect();
+    }
 
-		try {
-			if (readers == null) {
-				init();
-			}
+    @ReactMethod
+    public void connect(String name, Promise promise) {
+        Log.d(LOG, "connect");
 
-			ArrayList<ReaderDevice> devices = readers.GetAvailableRFIDReaderList();
+        try {
+            if (readers == null) {
+                init();
+            }
 
-			for (ReaderDevice device : devices) {
-				if (device.getName().equals(name)) {
-					readerDevice = device;
-					reader = device.getRFIDReader();
-				}
-			}
+            ArrayList<ReaderDevice> devices = readers.GetAvailableRFIDReaderList();
 
-			doConnect();
-			promise.resolve(true);
-		} catch (Exception error) {
-			promise.reject(error);
-		}
-	}
+            for (ReaderDevice device : devices) {
+                if (device.getName().equals(name)) {
+                    readerDevice = device;
+                    reader = device.getRFIDReader();
+                }
+            }
 
-	@ReactMethod
-	public void getDeviceDetails(Promise promise) {
-		Log.d(LOG, "getDeviceDetails");
+            doConnect();
+            promise.resolve(true);
+        } catch (Exception error) {
+            promise.reject(error);
+        }
+    }
 
-		if (reader != null && reader.isConnected()) {
-			try {
-				Antennas.AntennaRfConfig antennaRFConfig = reader.Config.Antennas.getAntennaRfConfig(1);
-				int antennaLevel = antennaRFConfig.getTransmitPowerIndex();
+    @ReactMethod
+    public void getDeviceDetails(Promise promise) {
+        Log.d(LOG, "getDeviceDetails");
 
-				WritableMap map = Arguments.createMap();
-				map.putString("name", readerDevice.getName());
-				map.putString("mac", readerDevice.getAddress());
-				map.putInt("antennaLevel", antennaLevel / 10);
+        if (reader != null && reader.isConnected()) {
+            try {
+                reader.Config.getDeviceStatus(true, false, false);
 
-				promise.resolve(map);
-			} catch (InvalidUsageException e) {
-				e.printStackTrace();
-			} catch (OperationFailureException e) {
-				e.printStackTrace();
-				promise.reject(e);
-			}
-		}
+                Antennas.AntennaRfConfig antennaRFConfig = reader.Config.Antennas.getAntennaRfConfig(1);
+                int antennaLevel = antennaRFConfig.getTransmitPowerIndex();
 
-		promise.reject(LOG, "Fail to device details");
-	}
+                WritableMap map = Arguments.createMap();
+                map.putString("name", readerDevice.getName());
+                map.putString("mac", readerDevice.getAddress());
+                map.putInt("antennaLevel", antennaLevel / 10);
 
-	@ReactMethod
-	public void clear() {
-		Log.d(LOG, "clear");
+                promise.resolve(map);
+            } catch (InvalidUsageException e) {
+                e.printStackTrace();
+            } catch (OperationFailureException e) {
+                e.printStackTrace();
+                promise.reject(e);
+            }
+        }
 
-		cacheTags = new ArrayList<>();
-	}
+        promise.reject(LOG, "Fail to device details");
+    }
 
-	@ReactMethod
-	public void setSingleRead(boolean enable) {
-		Log.d(LOG, "setSingleRead");
+    @ReactMethod
+    public void clear() {
+        Log.d(LOG, "clear");
 
-		isSingleRead = enable;
-	}
+        cacheTags = new ArrayList<>();
+    }
 
-	@ReactMethod
-	public void setAntennaLevel(int antennaLevel, Promise promise) {
-		Log.d(LOG, "setAntennaLevel");
+    @ReactMethod
+    public void setSingleRead(boolean enable) {
+        Log.d(LOG, "setSingleRead");
 
-		if (reader != null && reader.isConnected()) {
-			Antennas.AntennaRfConfig antennaRfConfig = null;
-			try {
-				antennaRfConfig = reader.Config.Antennas
-						.getAntennaRfConfig(1);
+        isSingleRead = enable;
+    }
 
-				antennaRfConfig.setTransmitPowerIndex(antennaLevel * 10);
-				reader.Config.Antennas.setAntennaRfConfig(1, antennaRfConfig);
+    @ReactMethod
+    public void setAntennaLevel(int antennaLevel, Promise promise) {
+        Log.d(LOG, "setAntennaLevel");
 
-				promise.resolve(true);
-			} catch (InvalidUsageException e) {
-				e.printStackTrace();
-			} catch (OperationFailureException e) {
-				e.printStackTrace();
-				promise.reject(e);
-			}
-		}
+        if (reader != null && reader.isConnected()) {
+            Antennas.AntennaRfConfig antennaRfConfig = null;
+            try {
+                antennaRfConfig = reader.Config.Antennas
+                        .getAntennaRfConfig(1);
 
-		promise.reject(LOG, "Fail to change antenna level");
-	}
+                antennaRfConfig.setTransmitPowerIndex(antennaLevel * 10);
+                reader.Config.Antennas.setAntennaRfConfig(1, antennaRfConfig);
 
-	@ReactMethod
-	public void programTag(String oldTag, String newTag, Promise promise) {
-		Log.d(LOG, "programTag");
+                promise.resolve(true);
+            } catch (InvalidUsageException e) {
+                e.printStackTrace();
+            } catch (OperationFailureException e) {
+                e.printStackTrace();
+                promise.reject(e);
+            }
+        }
 
-		if (reader != null && reader.isConnected()) {
-			if (oldTag != null && newTag != null) {
-				try {
-					reader.Config.setDPOState(DYNAMIC_POWER_OPTIMIZATION.DISABLE);
+        promise.reject(LOG, "Fail to change antenna level");
+    }
 
-					TagAccess tagAccess = new TagAccess();
-					final TagAccess.WriteAccessParams writeAccessParams = tagAccess.new WriteAccessParams();
+    @ReactMethod
+    public void programTag(String oldTag, String newTag, Promise promise) {
+        Log.d(LOG, "programTag");
 
-					writeAccessParams.setAccessPassword(Long.decode("0X" + "0"));
-					writeAccessParams.setMemoryBank(MEMORY_BANK.MEMORY_BANK_EPC);
-					writeAccessParams.setOffset(2);
-					writeAccessParams.setWriteData(newTag);
-					writeAccessParams.setWriteDataLength(newTag.length() / 4);
+        if (reader != null && reader.isConnected()) {
+            if (oldTag != null && newTag != null) {
+                try {
+                    reader.Config.setDPOState(DYNAMIC_POWER_OPTIMIZATION.DISABLE);
 
-					String error = null;
-					try {
-						reader.Actions.TagAccess.writeWait(oldTag, writeAccessParams, null, null);
-					} catch (InvalidUsageException e) {
-						e.printStackTrace();
-						error = e.getInfo();
-					} catch (OperationFailureException e) {
-						e.printStackTrace();
-						error = e.getVendorMessage();
-					} catch (Exception e) {
-						error = e.getMessage();
-					}
+                    TagAccess tagAccess = new TagAccess();
+                    final TagAccess.WriteAccessParams writeAccessParams = tagAccess.new WriteAccessParams();
 
-					WritableMap map = Arguments.createMap();
-					map.putBoolean("status", error == null);
-					map.putString("error", error);
-					sendEvent(WRITE_TAG_STATUS, map);
+                    writeAccessParams.setAccessPassword(Long.decode("0X" + "0"));
+                    writeAccessParams.setMemoryBank(MEMORY_BANK.MEMORY_BANK_EPC);
+                    writeAccessParams.setOffset(2);
+                    writeAccessParams.setWriteData(newTag);
+                    writeAccessParams.setWriteDataLength(newTag.length() / 4);
 
-					promise.resolve(true);
-				} catch (InvalidUsageException | OperationFailureException e) {
-					e.printStackTrace();
-				}
-			}
-		}
+                    String error = null;
+                    try {
+                        reader.Actions.TagAccess.writeWait(oldTag, writeAccessParams, null, null);
+                    } catch (InvalidUsageException e) {
+                        e.printStackTrace();
+                        error = e.getInfo();
+                    } catch (OperationFailureException e) {
+                        e.printStackTrace();
+                        error = e.getVendorMessage();
+                    } catch (Exception e) {
+                        error = e.getMessage();
+                    }
 
-		promise.reject(LOG, "Fail to program tag");
-	}
+                    WritableMap map = Arguments.createMap();
+                    map.putBoolean("status", error == null);
+                    map.putString("error", error);
+                    sendEvent(WRITE_TAG_STATUS, map);
 
-	@ReactMethod
-	public void setEnabled(boolean enable, Promise promise) {
-		Log.d(LOG, "setEnabled");
+                    promise.resolve(true);
+                } catch (InvalidUsageException | OperationFailureException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
 
-		try {
-			if (reader != null && reader.isConnected()) {
+        promise.reject(LOG, "Fail to program tag");
+    }
+
+    @ReactMethod
+    public void setEnabled(boolean enable, Promise promise) {
+        Log.d(LOG, "setEnabled");
+
+        try {
+            if (reader != null && reader.isConnected()) {
 //				reader.Events.setTagReadEvent(enable);
 //				reader.Events.setInventoryStartEvent(enable);
 //				reader.Events.setInventoryStartEvent(enable);
 
-				reader.Config.setTriggerMode(enable ? ENUM_TRIGGER_MODE.RFID_MODE :
-						ENUM_TRIGGER_MODE.BARCODE_MODE, true);
-			}
+                reader.Config.setTriggerMode(enable ? ENUM_TRIGGER_MODE.RFID_MODE :
+                        ENUM_TRIGGER_MODE.BARCODE_MODE, true);
+            }
 
-			promise.resolve(true);
-		} catch (Exception err) {
-			promise.reject(err);
-		}
+            promise.resolve(true);
+        } catch (Exception err) {
+            promise.reject(err);
+        }
 
-	}
+    }
 
-	private void init() {
-		Log.d(LOG, "init");
+    private void init() {
+        Log.d(LOG, "init");
 
-		if (readers == null) {
-			readers = new Readers(this.reactContext, ENUM_TRANSPORT.BLUETOOTH);
-			readers.attach(this);
-		}
-	}
+        if (readers == null) {
+            readers = new Readers(this.reactContext, ENUM_TRANSPORT.BLUETOOTH);
+            readers.attach(this);
+        }
+    }
 
-	private void dispose() {
-		Log.d(LOG, "dispose");
+    private void dispose() {
+        Log.d(LOG, "dispose");
 
-		try {
-			if (readers != null) {
-				reader = null;
-				readers.Dispose();
-				readers = null;
-				readerDevice = null;
-			}
-		} catch (Exception e) {
-			e.printStackTrace();
-		}
-	}
+        try {
+            if (readers != null) {
+                reader = null;
+                readers.Dispose();
+                readers = null;
+                readerDevice = null;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
 
-	private void doConnect() {
-		if (reader != null && !reader.isConnected()) {
-			new Thread(new Runnable() {
-				@Override
-				public void run() {
-					String error = "Connection failed";
-					try {
-						// Establish connection to the RFID Reader
-						reader.connect();
-						ConfigureReader();
+    private void doConnect() {
+        if (reader != null && !reader.isConnected()) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    String error = "Connection failed";
+                    try {
+                        // Establish connection to the RFID Reader
+                        reader.connect();
+                        ConfigureReader();
 
-						Log.d(LOG, reader.getHostName() + " is connected");
-						error = null;
+                        Log.d(LOG, reader.getHostName() + " is connected");
+                        error = null;
 
-					} catch (InvalidUsageException e) {
-						e.printStackTrace();
-					} catch (OperationFailureException e) {
-						e.printStackTrace();
-						if (e.getResults() == RFIDResults.RFID_READER_REGION_NOT_CONFIGURED) {
-							try {
-								RegulatoryConfig regulatoryConfig = reader.Config.getRegulatoryConfig();
+                    } catch (InvalidUsageException e) {
+                        e.printStackTrace();
+                    } catch (OperationFailureException e) {
+                        e.printStackTrace();
+                        if (e.getResults() == RFIDResults.RFID_READER_REGION_NOT_CONFIGURED) {
+                            try {
+                                RegulatoryConfig regulatoryConfig = reader.Config.getRegulatoryConfig();
 
-								SupportedRegions regions = reader.ReaderCapabilities.SupportedRegions;
-								int len = regions.length();
-								for (int i = 0; i < len; i++) {
-									RegionInfo regionInfo = regions.getRegionInfo(i);
-									if ("AUS".equals(regionInfo.getRegionCode())) {
-										regulatoryConfig.setRegion(regionInfo.getRegionCode());
-										reader.Config.setRegulatoryConfig(regulatoryConfig);
-										Log.d("RFID", "Region set to " + regionInfo.getName());
-									}
-								}
-							} catch (InvalidUsageException | OperationFailureException invalidUsageException) {
-								invalidUsageException.printStackTrace();
-							}
-						} else {
-							error = e.getResults().toString();
-						}
-					} catch (Exception e) {
-						e.printStackTrace();
-						error = e.getMessage();
-					}
+                                SupportedRegions regions = reader.ReaderCapabilities.SupportedRegions;
+                                int len = regions.length();
+                                for (int i = 0; i < len; i++) {
+                                    RegionInfo regionInfo = regions.getRegionInfo(i);
+                                    if ("AUS".equals(regionInfo.getRegionCode())) {
+                                        regulatoryConfig.setRegion(regionInfo.getRegionCode());
+                                        reader.Config.setRegulatoryConfig(regulatoryConfig);
+                                        Log.d("RFID", "Region set to " + regionInfo.getName());
+                                    }
+                                }
+                            } catch (InvalidUsageException | OperationFailureException invalidUsageException) {
+                                invalidUsageException.printStackTrace();
+                            }
+                        } else {
+                            error = e.getResults().toString();
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        error = e.getMessage();
+                    }
 
-					WritableMap map = Arguments.createMap();
-					map.putBoolean("status", error == null);
-					map.putString("error", error);
-					sendEvent(READER_STATUS, map);
-				}
-			}).start();
-		}
-	}
+                    WritableMap map = Arguments.createMap();
+                    map.putBoolean("status", error == null);
+                    map.putString("error", error);
+                    sendEvent(READER_STATUS, map);
+                }
+            }).start();
+        }
+    }
 
-	private void doReconnect() {
-		Log.d(LOG, "doReconnect " + reader);
+    private void doReconnect() {
+        Log.d(LOG, "doReconnect " + reader);
 
-		if (reader != null) {
-			try {
-				reader.reconnect();
+        if (reader != null) {
+            try {
+                reader.reconnect();
 
-				WritableMap map = Arguments.createMap();
-				map.putBoolean("status", true);
-				map.putString("error", null);
-				sendEvent(READER_STATUS, map);
-			} catch (InvalidUsageException | OperationFailureException e) {
-				WritableMap map = Arguments.createMap();
-				map.putBoolean("status", false);
-				map.putString("error", e.getMessage());
-				sendEvent(READER_STATUS, map);
-			}
-		}
-	}
+                WritableMap map = Arguments.createMap();
+                map.putBoolean("status", true);
+                map.putString("error", null);
+                sendEvent(READER_STATUS, map);
+            } catch (InvalidUsageException | OperationFailureException e) {
+                WritableMap map = Arguments.createMap();
+                map.putBoolean("status", false);
+                map.putString("error", e.getMessage());
+                sendEvent(READER_STATUS, map);
+            }
+        }
+    }
 
-	private void doDisconnect() {
-		Log.d(LOG, "doDisconnect " + reader);
+    private void doDisconnect() {
+        Log.d(LOG, "doDisconnect " + reader);
 
-		if (reader != null && reader.isConnected()) {
-			try {
-				reader.Events.removeEventsListener(this);
+        if (reader != null && reader.isConnected()) {
+            try {
+                reader.Events.removeEventsListener(this);
 
-				new Thread(new Runnable() {
-					@Override
-					public void run() {
-						String error = null;
-						try {
-							reader.disconnect();
-							Log.d(LOG, reader.getHostName() + "is disconnected ");
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        String error = null;
+                        try {
+                            reader.disconnect();
+                            Log.d(LOG, reader.getHostName() + "is disconnected ");
 
-						} catch (InvalidUsageException | OperationFailureException e) {
-							error = e.getMessage();
-						}
+                        } catch (InvalidUsageException | OperationFailureException e) {
+                            error = e.getMessage();
+                        }
 
-						WritableMap map = Arguments.createMap();
-						map.putBoolean("status", false);
-						map.putString("error", error);
-						sendEvent(READER_STATUS, map);
-					}
-				}).start();
+                        WritableMap map = Arguments.createMap();
+                        map.putBoolean("status", false);
+                        map.putString("error", error);
+                        sendEvent(READER_STATUS, map);
+                    }
+                }).start();
 
-			} catch (InvalidUsageException | OperationFailureException e) {
-				WritableMap map = Arguments.createMap();
-				map.putBoolean("status", false);
-				map.putString("error", e.getMessage());
-				sendEvent(READER_STATUS, map);
-			}
-		}
-	}
+            } catch (InvalidUsageException | OperationFailureException e) {
+                WritableMap map = Arguments.createMap();
+                map.putBoolean("status", false);
+                map.putString("error", e.getMessage());
+                sendEvent(READER_STATUS, map);
+            }
+        }
+    }
 
-	private void ConfigureReader() throws Exception {
+    private void ConfigureReader() throws Exception {
 
-		if (reader.isConnected()) {
+        if (reader.isConnected()) {
 //			reader.Config.resetFactoryDefaults();
 
-			TriggerInfo triggerInfo = new TriggerInfo();
-			triggerInfo.StartTrigger.setTriggerType(START_TRIGGER_TYPE.START_TRIGGER_TYPE_IMMEDIATE);
-			triggerInfo.StopTrigger.setTriggerType(STOP_TRIGGER_TYPE.STOP_TRIGGER_TYPE_IMMEDIATE);
+            TriggerInfo triggerInfo = new TriggerInfo();
+            triggerInfo.StartTrigger.setTriggerType(START_TRIGGER_TYPE.START_TRIGGER_TYPE_IMMEDIATE);
+            triggerInfo.StopTrigger.setTriggerType(STOP_TRIGGER_TYPE.STOP_TRIGGER_TYPE_IMMEDIATE);
 
-			// receive events from reader
-			reader.Events.addEventsListener(this);
+            // receive events from reader
+            reader.Events.addEventsListener(this);
 
-			reader.Events.setReaderDisconnectEvent(true);
-			reader.Events.setInventoryStartEvent(true);
-			reader.Events.setInventoryStopEvent(true);
-			reader.Events.setPowerEvent(true);
-			reader.Events.setOperationEndSummaryEvent(true);
+            reader.Events.setReaderDisconnectEvent(true);
+            reader.Events.setInventoryStartEvent(true);
+            reader.Events.setInventoryStopEvent(true);
+            reader.Events.setPowerEvent(true);
+            reader.Events.setOperationEndSummaryEvent(true);
 
-			//Battery event
-			reader.Events.setBatteryEvent(true);
-			// HH event. Control active reader
-			reader.Events.setHandheldEvent(true);
-			// tag event with tag data
-			reader.Events.setTagReadEvent(true);
-			reader.Events.setAttachTagDataWithReadEvent(false);
+            //Battery event
+            reader.Events.setBatteryEvent(true);
+            // HH event. Control active reader
+            reader.Events.setHandheldEvent(true);
+            // tag event with tag data
+            reader.Events.setTagReadEvent(true);
+            reader.Events.setAttachTagDataWithReadEvent(false);
 
-			//Disable batch mode
-			reader.Events.setBatchModeEvent(false);
-			reader.Config.setBatchMode(BATCH_MODE.DISABLE);
+            //Disable batch mode
+            reader.Events.setBatchModeEvent(false);
+            reader.Config.setBatchMode(BATCH_MODE.DISABLE);
 
-			//Turn Off beeper
-			reader.Config.setBeeperVolume(BEEPER_VOLUME.HIGH_BEEP);
+            //Turn Off beeper
+            reader.Config.setBeeperVolume(BEEPER_VOLUME.HIGH_BEEP);
 
-			// set trigger mode as rfid so scanner beam will not come
-			reader.Config.setTriggerMode(ENUM_TRIGGER_MODE.RFID_MODE, true);
-			// set start and stop triggers
-			reader.Config.setStartTrigger(triggerInfo.StartTrigger);
-			reader.Config.setStopTrigger(triggerInfo.StopTrigger);
-			//set DPO enable
-			reader.Config.setDPOState(DYNAMIC_POWER_OPTIMIZATION.ENABLE);
-			// power levels are index based so maximum power supported get the last one
+            // set trigger mode as rfid so scanner beam will not come
+            reader.Config.setTriggerMode(ENUM_TRIGGER_MODE.RFID_MODE, true);
+            // set start and stop triggers
+            reader.Config.setStartTrigger(triggerInfo.StartTrigger);
+            reader.Config.setStopTrigger(triggerInfo.StopTrigger);
+            //set DPO enable
+            reader.Config.setDPOState(DYNAMIC_POWER_OPTIMIZATION.ENABLE);
+            // power levels are index based so maximum power supported get the last one
 //			MAX_POWER = reader.ReaderCapabilities.getTransmitPowerLevelValues().length - 1;
-			// set antenna configuration
-			Antennas.AntennaRfConfig config = reader.Config.Antennas.getAntennaRfConfig(1);
+            // set antenna configuration
+            Antennas.AntennaRfConfig config = reader.Config.Antennas.getAntennaRfConfig(1);
 //			config.setTransmitPowerIndex(MAX_POWER);
-			config.setrfModeTableIndex(0);
-			config.setTari(0);
-			reader.Config.Antennas.setAntennaRfConfig(1, config);
-			// Set the singulation control
-			Antennas.SingulationControl s1_singulationControl = reader.Config.Antennas.getSingulationControl(1);
-			s1_singulationControl.setSession(SESSION.SESSION_S0);
-			s1_singulationControl.Action.setInventoryState(INVENTORY_STATE.INVENTORY_STATE_A);
-			s1_singulationControl.Action.setSLFlag(SL_FLAG.SL_ALL);
-			reader.Config.Antennas.setSingulationControl(1, s1_singulationControl);
-			// delete any prefilters
-			reader.Actions.PreFilters.deleteAll();
+            config.setrfModeTableIndex(0);
+            config.setTari(0);
+            reader.Config.Antennas.setAntennaRfConfig(1, config);
+            // Set the singulation control
+            Antennas.SingulationControl s1_singulationControl = reader.Config.Antennas.getSingulationControl(1);
+            s1_singulationControl.setSession(SESSION.SESSION_S0);
+            s1_singulationControl.Action.setInventoryState(INVENTORY_STATE.INVENTORY_STATE_A);
+            s1_singulationControl.Action.setSLFlag(SL_FLAG.SL_ALL);
+            reader.Config.Antennas.setSingulationControl(1, s1_singulationControl);
+            // delete any prefilters
+            reader.Actions.PreFilters.deleteAll();
 
-			Log.d("ConfigureReader", "Default ConfigureReader Finished" + reader.getHostName());
-		}
-	}
+            reader.Config.getDeviceStatus(true, false, false);
+            Log.d("ConfigureReader", "Default ConfigureReader Finished" + reader.getHostName());
+        }
+    }
 
-	private void read() {
-		if (reader != null && reader.isConnected()) {
-			try {
-				reader.Actions.Inventory.perform();
-			} catch (InvalidUsageException | OperationFailureException e) {
-				e.printStackTrace();
-			}
-		}
-	}
+    private void read() {
+        if (reader != null && reader.isConnected()) {
+            try {
+                reader.Actions.Inventory.perform();
+            } catch (InvalidUsageException | OperationFailureException e) {
+                e.printStackTrace();
+            }
+        }
+    }
 
-	private void cancel() {
-		if (reader != null && reader.isConnected()) {
-			try {
-				reader.Actions.Inventory.stop();
-			} catch (InvalidUsageException | OperationFailureException e) {
-				e.printStackTrace();
-			}
-		}
-	}
+    private void cancel() {
+        if (reader != null && reader.isConnected()) {
+            try {
+                reader.Actions.Inventory.stop();
+            } catch (InvalidUsageException | OperationFailureException e) {
+                e.printStackTrace();
+            }
+        }
+    }
 
-	private boolean addTagToList(String strEPC) {
-		if (strEPC != null) {
-			if (!cacheTags.contains(strEPC)) {
-				cacheTags.add(strEPC);
-				return true;
-			}
-		}
-		return false;
-	}
+    private boolean addTagToList(String strEPC) {
+        if (strEPC != null) {
+            if (!cacheTags.contains(strEPC)) {
+                cacheTags.add(strEPC);
+                return true;
+            }
+        }
+        return false;
+    }
 }
