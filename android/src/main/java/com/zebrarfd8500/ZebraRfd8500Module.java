@@ -50,7 +50,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
     private final ReactApplicationContext reactContext;
 
-    private final String LOG = "[RFD8500] ";
+    private final String LOG = "[RFD8500]";
     private final String READER_STATUS = "READER_STATUS";
     private final String TRIGGER_STATUS = "TRIGGER_STATUS";
     private final String WRITE_TAG_STATUS = "WRITE_TAG_STATUS";
