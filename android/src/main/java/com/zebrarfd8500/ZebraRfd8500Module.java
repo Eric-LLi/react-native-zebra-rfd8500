@@ -141,9 +141,11 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
                 Log.d("RFID", "Tag ID = " + EPC);
 
                 if (isSingleRead) {
-                    if (rssi > -40 && addTagToList(EPC)) {
-                        sendEvent(TAG, EPC);
-                        cancel();
+                    if (rssi > -40) {
+                        if (addTagToList(EPC)) {
+                            sendEvent(TAG, EPC);
+                            cancel();
+                        }
                     }
                 } else {
                     if (addTagToList(EPC)) {
@@ -416,10 +418,21 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
     }
 
     @ReactMethod
-    public void enableLocateTag(boolean enable, String tag) {
-        isLocateMode = enable;
+    public void enableLocateTag(boolean enable, String tag, Promise promise) {
+        try {
+            isLocateMode = enable;
 
-        locateTag = tag;
+            locateTag = tag;
+
+            if (!enable) {
+                ConfigureReader();
+            }
+
+            promise.resolve(true);
+        } catch (Exception err) {
+            promise.reject(err);
+        }
+
     }
 
     private void init() {
@@ -682,7 +695,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
     private void executeLocateTag(boolean isStart) {
         if (reader != null && reader.isConnected()) {
             if (isStart) {
-                if (locateTag != null) {
+                if (locateTag != null && !isLocatingTag) {
                     isLocatingTag = true;
 
                     new AsyncTask<Void, Void, Boolean>() {
