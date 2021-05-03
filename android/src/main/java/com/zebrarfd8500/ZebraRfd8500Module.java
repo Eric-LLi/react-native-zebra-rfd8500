@@ -141,7 +141,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
                 Log.d("RFID", "Tag ID = " + EPC);
 
                 if (isSingleRead) {
-                    if (rssi > -40) {
+                    if (rssi > -50) {
                         if (addTagToList(EPC)) {
                             sendEvent(TAG, EPC);
                             cancel();
