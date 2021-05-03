@@ -38,7 +38,7 @@ type onReaderStatus = (data: ReaderStatus) => void;
 type onTagResult = (tag: string) => void;
 type onProgramResult = (data: ProgramStatus) => void;
 type onTriggerStatus = (data: TriggerStatus) => void;
-type onLocateTagResult = (data: { distance: number }) => void;
+type onLocateTagResult = (data: { distance: number, error?: string }) => void;
 type onBatteryResult = (data: BatteryTypes) => void;
 
 export type Callbacks = onReaderStatus | onTagResult | onProgramResult | onTriggerStatus | onLocateTagResult | onBatteryResult;

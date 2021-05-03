@@ -1,5 +1,6 @@
 package com.zebrarfd8500;
 
+import android.os.AsyncTask;
 import android.util.Log;
 import android.widget.Toast;
 
@@ -63,6 +64,10 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
     private static RFIDReader reader;
     private static ArrayList<String> cacheTags = new ArrayList<>();
     private static boolean isSingleRead = false;
+
+    private static boolean isLocatingTag = false;
+    private static boolean isLocateMode = false;
+    private static String locateTag = null;
 
     public ZebraRfd8500Module(ReactApplicationContext reactContext) {
         super(reactContext);
@@ -149,6 +154,10 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
                 if (myTag.isContainsLocationInfo()) {
                     short dist = myTag.LocationInfo.getRelativeDistance();
                     Log.d(LOG, "Tag relative distance " + dist);
+
+                    WritableMap event = Arguments.createMap();
+                    event.putInt("distance", dist);
+                    sendEvent(LOCATE_TAG, event);
                 }
             }
         }
@@ -158,9 +167,18 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
     public void eventStatusNotify(RfidStatusEvents rfidStatusEvents) {
         if (rfidStatusEvents.StatusEventData.getStatusEventType() == STATUS_EVENT_TYPE.HANDHELD_TRIGGER_EVENT) {
             if (rfidStatusEvents.StatusEventData.HandheldTriggerEventData.getHandheldEvent() == HANDHELD_TRIGGER_EVENT_TYPE.HANDHELD_TRIGGER_PRESSED) {
-                read();
+                if (isLocateMode) {
+                    executeLocateTag(true);
+                } else {
+                    read();
+                }
             } else if (rfidStatusEvents.StatusEventData.HandheldTriggerEventData.getHandheldEvent() == HANDHELD_TRIGGER_EVENT_TYPE.HANDHELD_TRIGGER_RELEASED) {
-                cancel();
+                if (isLocateMode) {
+                    executeLocateTag(false);
+                } else {
+                    cancel();
+                }
+
             }
 
             WritableMap map = Arguments.createMap();
@@ -397,6 +415,13 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
     }
 
+    @ReactMethod
+    public void enableLocateTag(boolean enable, String tag) {
+        isLocateMode = enable;
+
+        locateTag = tag;
+    }
+
     private void init() {
         Log.d(LOG, "init");
 
@@ -423,53 +448,97 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
     private void doConnect() {
         if (reader != null && !reader.isConnected()) {
-            new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    String error = "Connection failed";
+
+            String error = "Connection failed";
+            try {
+                // Establish connection to the RFID Reader
+                reader.connect();
+                ConfigureReader();
+
+                Log.d(LOG, reader.getHostName() + " is connected");
+                error = null;
+
+            } catch (InvalidUsageException e) {
+                e.printStackTrace();
+            } catch (OperationFailureException e) {
+                e.printStackTrace();
+                if (e.getResults() == RFIDResults.RFID_READER_REGION_NOT_CONFIGURED) {
                     try {
-                        // Establish connection to the RFID Reader
-                        reader.connect();
-                        ConfigureReader();
+                        RegulatoryConfig regulatoryConfig = reader.Config.getRegulatoryConfig();
 
-                        Log.d(LOG, reader.getHostName() + " is connected");
-                        error = null;
-
-                    } catch (InvalidUsageException e) {
-                        e.printStackTrace();
-                    } catch (OperationFailureException e) {
-                        e.printStackTrace();
-                        if (e.getResults() == RFIDResults.RFID_READER_REGION_NOT_CONFIGURED) {
-                            try {
-                                RegulatoryConfig regulatoryConfig = reader.Config.getRegulatoryConfig();
-
-                                SupportedRegions regions = reader.ReaderCapabilities.SupportedRegions;
-                                int len = regions.length();
-                                for (int i = 0; i < len; i++) {
-                                    RegionInfo regionInfo = regions.getRegionInfo(i);
-                                    if ("AUS".equals(regionInfo.getRegionCode())) {
-                                        regulatoryConfig.setRegion(regionInfo.getRegionCode());
-                                        reader.Config.setRegulatoryConfig(regulatoryConfig);
-                                        Log.d("RFID", "Region set to " + regionInfo.getName());
-                                    }
-                                }
-                            } catch (InvalidUsageException | OperationFailureException invalidUsageException) {
-                                invalidUsageException.printStackTrace();
+                        SupportedRegions regions = reader.ReaderCapabilities.SupportedRegions;
+                        int len = regions.length();
+                        for (int i = 0; i < len; i++) {
+                            RegionInfo regionInfo = regions.getRegionInfo(i);
+                            if ("AUS".equals(regionInfo.getRegionCode())) {
+                                regulatoryConfig.setRegion(regionInfo.getRegionCode());
+                                reader.Config.setRegulatoryConfig(regulatoryConfig);
+                                Log.d("RFID", "Region set to " + regionInfo.getName());
                             }
-                        } else {
-                            error = e.getResults().toString();
                         }
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                        error = e.getMessage();
+                    } catch (InvalidUsageException | OperationFailureException invalidUsageException) {
+                        invalidUsageException.printStackTrace();
                     }
-
-                    WritableMap map = Arguments.createMap();
-                    map.putBoolean("status", error == null);
-                    map.putString("error", error);
-                    sendEvent(READER_STATUS, map);
+                } else {
+                    error = e.getResults().toString();
                 }
-            }).start();
+            } catch (Exception e) {
+                e.printStackTrace();
+                error = e.getMessage();
+            }
+
+            WritableMap map = Arguments.createMap();
+            map.putBoolean("status", error == null);
+            map.putString("error", error);
+            sendEvent(READER_STATUS, map);
+//
+//            new Thread(new Runnable() {
+//                @Override
+//                public void run() {
+//                    String error = "Connection failed";
+//                    try {
+//                        // Establish connection to the RFID Reader
+//                        reader.connect();
+//                        ConfigureReader();
+//
+//                        Log.d(LOG, reader.getHostName() + " is connected");
+//                        error = null;
+//
+//                    } catch (InvalidUsageException e) {
+//                        e.printStackTrace();
+//                    } catch (OperationFailureException e) {
+//                        e.printStackTrace();
+//                        if (e.getResults() == RFIDResults.RFID_READER_REGION_NOT_CONFIGURED) {
+//                            try {
+//                                RegulatoryConfig regulatoryConfig = reader.Config.getRegulatoryConfig();
+//
+//                                SupportedRegions regions = reader.ReaderCapabilities.SupportedRegions;
+//                                int len = regions.length();
+//                                for (int i = 0; i < len; i++) {
+//                                    RegionInfo regionInfo = regions.getRegionInfo(i);
+//                                    if ("AUS".equals(regionInfo.getRegionCode())) {
+//                                        regulatoryConfig.setRegion(regionInfo.getRegionCode());
+//                                        reader.Config.setRegulatoryConfig(regulatoryConfig);
+//                                        Log.d("RFID", "Region set to " + regionInfo.getName());
+//                                    }
+//                                }
+//                            } catch (InvalidUsageException | OperationFailureException invalidUsageException) {
+//                                invalidUsageException.printStackTrace();
+//                            }
+//                        } else {
+//                            error = e.getResults().toString();
+//                        }
+//                    } catch (Exception e) {
+//                        e.printStackTrace();
+//                        error = e.getMessage();
+//                    }
+//
+//                    WritableMap map = Arguments.createMap();
+//                    map.putBoolean("status", error == null);
+//                    map.putString("error", error);
+//                    sendEvent(READER_STATUS, map);
+//                }
+//            }).start();
         }
     }
 
@@ -606,6 +675,82 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
                 reader.Actions.Inventory.stop();
             } catch (InvalidUsageException | OperationFailureException e) {
                 e.printStackTrace();
+            }
+        }
+    }
+
+    private void executeLocateTag(boolean isStart) {
+        if (reader != null && reader.isConnected()) {
+            if (isStart) {
+                if (locateTag != null) {
+                    isLocatingTag = true;
+
+                    new AsyncTask<Void, Void, Boolean>() {
+                        private InvalidUsageException invalidUsageException;
+                        private OperationFailureException operationFailureException;
+
+                        @Override
+                        protected Boolean doInBackground(Void... voids) {
+                            try {
+                                reader.Actions.TagLocationing.Perform(locateTag, null, null);
+                            } catch (InvalidUsageException e) {
+                                e.printStackTrace();
+                                invalidUsageException = e;
+                            } catch (OperationFailureException e) {
+                                e.printStackTrace();
+                                operationFailureException = e;
+                            }
+                            return null;
+                        }
+
+                        @Override
+                        protected void onPostExecute(Boolean result) {
+                            if (invalidUsageException != null) {
+                                WritableMap map = Arguments.createMap();
+                                map.putString("error", invalidUsageException.getInfo());
+                                sendEvent(LOCATE_TAG, map);
+                            } else if (operationFailureException != null) {
+                                WritableMap map = Arguments.createMap();
+                                map.putString("error", operationFailureException.getVendorMessage());
+                                sendEvent(LOCATE_TAG, map);
+                            }
+                        }
+                    }.execute();
+                }
+            } else {
+                isLocatingTag = false;
+
+                new AsyncTask<Void, Void, Boolean>() {
+                    private InvalidUsageException invalidUsageException;
+                    private OperationFailureException operationFailureException;
+
+                    @Override
+                    protected Boolean doInBackground(Void... voids) {
+                        try {
+                            reader.Actions.TagLocationing.Stop();
+                        } catch (InvalidUsageException e) {
+                            invalidUsageException = e;
+                            e.printStackTrace();
+                        } catch (OperationFailureException e) {
+                            operationFailureException = e;
+                            e.printStackTrace();
+                        }
+                        return null;
+                    }
+
+                    @Override
+                    protected void onPostExecute(Boolean result) {
+                        if (invalidUsageException != null) {
+                            WritableMap map = Arguments.createMap();
+                            map.putString("error", invalidUsageException.getInfo());
+                            sendEvent(LOCATE_TAG, map);
+                        } else if (operationFailureException != null) {
+                            WritableMap map = Arguments.createMap();
+                            map.putString("error", operationFailureException.getVendorMessage());
+                            sendEvent(LOCATE_TAG, map);
+                        }
+                    }
+                }.execute();
             }
         }
     }
