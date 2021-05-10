@@ -142,9 +142,10 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
 
                 if (isSingleRead) {
                     if (rssi > -50) {
-                        if (addTagToList(EPC)) {
-                            sendEvent(TAG, EPC);
+                        if (addTagToList(EPC) && cacheTags.size() == 1) {
                             cancel();
+
+                            sendEvent(TAG, EPC);
                         }
                     }
                 } else {
