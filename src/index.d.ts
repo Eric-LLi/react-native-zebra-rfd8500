@@ -74,3 +74,5 @@ export declare function setEnabled(enable: boolean): Promise<void>;
 export declare function setSingleRead(enable: boolean): void;
 
 export declare function enableLocateTag(enable: boolean, tag?: string): Promise<void>;
+
+export declare function softReadCancel(enable: boolean): Promise<void>

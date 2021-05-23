@@ -181,7 +181,6 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
                 } else {
                     cancel();
                 }
-
             }
 
             WritableMap map = Arguments.createMap();
@@ -434,6 +433,19 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
             promise.reject(err);
         }
 
+    }
+
+    @ReactMethod
+    public void softReadCancel(boolean enable, Promise promise) {
+        try {
+            if (enable) {
+                read();
+            } else {
+                cancel();
+            }
+        } catch (Exception err) {
+            promise.reject(err);
+        }
     }
 
     private void init() {
