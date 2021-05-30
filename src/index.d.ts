@@ -16,7 +16,7 @@ export type BatteryTypes = {
 export type DevicesTypes = {
 	name: string;
 	mac: string;
-	antennaLevel?: string;
+	antennaLevel?: number;
 	power?: number;
 };
 
