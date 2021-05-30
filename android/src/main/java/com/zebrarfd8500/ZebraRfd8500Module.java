@@ -673,7 +673,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
             reader.Config.Antennas.setAntennaRfConfig(1, config);
             // Set the singulation control
             Antennas.SingulationControl s1_singulationControl = reader.Config.Antennas.getSingulationControl(1);
-            s1_singulationControl.setSession(SESSION.SESSION_S0);
+            s1_singulationControl.setSession(SESSION.SESSION_S1);
             s1_singulationControl.Action.setInventoryState(INVENTORY_STATE.INVENTORY_STATE_A);
             s1_singulationControl.Action.setSLFlag(SL_FLAG.SL_ALL);
             reader.Config.Antennas.setSingulationControl(1, s1_singulationControl);
