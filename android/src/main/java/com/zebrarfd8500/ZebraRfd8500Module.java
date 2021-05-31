@@ -473,6 +473,10 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
     }
 
     private void doConnect() {
+        if (reader != null && reader.isConnected()) {
+            doDisconnect();
+        }
+        
         if (reader != null && !reader.isConnected()) {
 
             String error = "Connection failed";
