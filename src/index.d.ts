@@ -1,5 +1,6 @@
 export enum READER_EVENTS {
 	TAG = 'TAG',
+	TAGS = 'TAGS',
 	BARCODE = 'BARCODE',
 	LOCATE_TAG = 'LOCATE_TAG',
 	WRITE_TAG = 'WRITE_TAG',
@@ -36,12 +37,13 @@ export type TriggerStatus = {
 
 type onReaderStatus = (data: ReaderStatus) => void;
 type onTagResult = (tag: string) => void;
+type onTagsResult = (tags: string[]) => void;
 type onProgramResult = (data: ProgramStatus) => void;
 type onTriggerStatus = (data: TriggerStatus) => void;
 type onLocateTagResult = (data: { distance: number, error?: string }) => void;
 type onBatteryResult = (data: BatteryTypes) => void;
 
-export type Callbacks = onReaderStatus | onTagResult | onProgramResult | onTriggerStatus | onLocateTagResult | onBatteryResult;
+export type Callbacks = onReaderStatus | onTagResult | onProgramResult | onTriggerStatus | onLocateTagResult | onBatteryResult | onTagsResult;
 
 export declare function on(event: READER_EVENTS, callback: Callbacks): void;
 
@@ -49,7 +51,7 @@ export declare function off(event: READER_EVENTS): void;
 
 export declare function removeAll(event: READER_EVENTS): void;
 
-export declare function connect(name: string): Promise<boolean>;
+export declare function connect(name: string, mac:string): Promise<boolean>;
 
 export declare function reconnect(): void;
 
