@@ -21,6 +21,7 @@ import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.modules.core.DeviceEventManagerModule;
 import com.zebra.rfid.api3.ACCESS_OPERATION_CODE;
 import com.zebra.rfid.api3.ACCESS_OPERATION_STATUS;
+import com.zebra.rfid.api3.AntennaInfo;
 import com.zebra.rfid.api3.Antennas;
 import com.zebra.rfid.api3.BATCH_MODE;
 import com.zebra.rfid.api3.BEEPER_VOLUME;
@@ -79,6 +80,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
     private static final ArrayList<String> cacheTags = new ArrayList<>();
     private static boolean isSingleRead = false;
     private static boolean isReadingBarcode = false;
+    private static boolean isReading = false;
 
     private static boolean isLocatingTag = false;
     private static boolean isLocateMode = false;
@@ -258,6 +260,10 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
             } else {
                 throw new Exception("Reader is not connected");
             }
+        } catch (InvalidUsageException err) {
+            promise.reject(LOG, err.getInfo());
+        } catch (OperationFailureException err) {
+            promise.reject(LOG, err.getResults().toString());
         } catch (Exception err) {
             promise.reject(err);
         }
@@ -296,6 +302,10 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
             } else {
                 throw new Exception("Reader is not connected");
             }
+        } catch (InvalidUsageException err) {
+            promise.reject(LOG, err.getInfo());
+        } catch (OperationFailureException err) {
+            promise.reject(LOG, err.getResults().toString());
         } catch (Exception err) {
             promise.reject(err);
         }
@@ -308,8 +318,6 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
             if (reader != null && reader.isConnected()) {
                 if (oldTag != null && newTag != null) {
 
-                    reader.Config.setDPOState(DYNAMIC_POWER_OPTIMIZATION.DISABLE);
-
                     TagAccess tagAccess = new TagAccess();
                     TagAccess.WriteAccessParams writeAccessParams = tagAccess.new WriteAccessParams();
 
@@ -319,9 +327,11 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
                     writeAccessParams.setWriteData(newTag);
                     writeAccessParams.setWriteDataLength(newTag.length() / 4);
 
-                    reader.Actions.TagAccess.writeWait(oldTag, writeAccessParams, null, null);
+                    writeAccessParams.setWriteRetries(3);
 
-                    reader.Config.setDPOState(DYNAMIC_POWER_OPTIMIZATION.ENABLE);
+                    TagData tagData = null;
+
+                    reader.Actions.TagAccess.writeWait(oldTag, writeAccessParams, null, tagData, true, true);
 
                     promise.resolve(true);
 
@@ -404,6 +414,45 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
         }
     }
 
+    @ReactMethod
+    public void setSession(int session, Promise promise) {
+        try {
+            SESSION ses = SESSION.SESSION_S0;
+
+            switch (session) {
+                case 0:
+                    ses = SESSION.SESSION_S0;
+                    break;
+                case 1:
+                    ses = SESSION.SESSION_S1;
+                    break;
+                case 2:
+                    ses = SESSION.SESSION_S2;
+                    break;
+                case 3:
+                    ses = SESSION.SESSION_S3;
+                    break;
+                default:
+                    break;
+            }
+
+            // Set the singulation control
+            Antennas.SingulationControl s1_singulationControl = reader.Config.Antennas.getSingulationControl(1);
+            s1_singulationControl.setSession(ses);
+            s1_singulationControl.Action.setInventoryState(INVENTORY_STATE.INVENTORY_STATE_AB_FLIP);
+            s1_singulationControl.Action.setSLFlag(SL_FLAG.SL_ALL);
+            reader.Config.Antennas.setSingulationControl(1, s1_singulationControl);
+
+            promise.resolve(true);
+        } catch (InvalidUsageException err) {
+            promise.reject(LOG, err.getInfo());
+        } catch (OperationFailureException err) {
+            promise.reject(LOG, err.getResults().toString());
+        } catch (Exception err) {
+            promise.reject(err);
+        }
+    }
+
     private final RfidEventsListener rEventListener = new RfidEventsListener() {
         @Override
         public void eventReadNotify(RfidReadEvents rfidReadEvents) {
@@ -411,12 +460,16 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
             TagData[] myTags = reader.Actions.getReadTags(100);
 
             if (myTags != null && myTags.length > 0) {
-                WritableArray array = Arguments.createArray();
+                ArrayList<String> temp_tags = new ArrayList<>();
+                String temp_tag = "";
+                int temp_rssi = -1000;
 
                 for (TagData myTag : myTags) {
-                    Log.d("RFID", "Tag ID = " + myTag.getTagID());
+
                     int rssi = myTag.getPeakRSSI();
                     String EPC = myTag.getTagID();
+
+                    Log.e(LOG, "EPC#: " + myTag.getTagID() + "RSSI: " + rssi);
 
                     if (myTag.getOpCode() == ACCESS_OPERATION_CODE.ACCESS_OPERATION_READ &&
                             myTag.getOpStatus() == ACCESS_OPERATION_STATUS.ACCESS_SUCCESS) {
@@ -435,23 +488,28 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
                     }
 
                     if (isSingleRead) {
-                        if (rssi > -50) {
-                            if (addTagToList(EPC) && cacheTags.size() == 1) {
-                                cancel();
-
-                                sendEvent(TAG, EPC);
-                            }
+                        if (rssi >= temp_rssi) {
+                            temp_tag = EPC;
+                            temp_rssi = rssi;
                         }
                     } else {
                         if (addTagToList(EPC)) {
-                            array.pushString(EPC);
-//                            sendEvent(TAG, EPC);
+                            temp_tags.add(EPC);
                         }
                     }
                 }
 
-                if (array.size() > 0)
-                    sendEvent(TAGS, array);
+                if (isSingleRead) {
+                    cancel();
+
+                    if (addTagToList(temp_tag) && cacheTags.size() == 1) {
+                        sendEvent(TAG, temp_tag);
+                    }
+                } else {
+                    if (temp_tags.size() > 0) {
+                        sendEvent(TAGS, Arguments.fromList(temp_tags));
+                    }
+                }
             }
         }
 
@@ -635,6 +693,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
     private void doConnect() {
         try {
             if (reader != null) {
+                Thread.sleep(50);
                 // Establish connection to the RFID Reader
                 reader.connect();
 
@@ -856,17 +915,20 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
         //Turn Off beeper
         reader.Config.setBeeperVolume(BEEPER_VOLUME.QUIET_BEEP);
 
+        reader.Config.setAccessOperationWaitTimeout(1000);
+
         // set trigger mode as rfid so scanner beam will not come
         reader.Config.setTriggerMode(ENUM_TRIGGER_MODE.RFID_MODE, true);
         // set start and stop triggers
         reader.Config.setStartTrigger(triggerInfo.StartTrigger);
         reader.Config.setStopTrigger(triggerInfo.StopTrigger);
         //set DPO enable
-        reader.Config.setDPOState(DYNAMIC_POWER_OPTIMIZATION.ENABLE);
+        reader.Config.setDPOState(DYNAMIC_POWER_OPTIMIZATION.DISABLE);
         // power levels are index based so maximum power supported get the last one
 //			MAX_POWER = reader.ReaderCapabilities.getTransmitPowerLevelValues().length - 1;
         // set antenna configuration
         Antennas.AntennaRfConfig config = reader.Config.Antennas.getAntennaRfConfig(1);
+
 //			config.setTransmitPowerIndex(MAX_POWER);
         config.setrfModeTableIndex(0);
         config.setTari(0);
@@ -883,7 +945,7 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
         // receive events from reader
         reader.Events.addEventsListener(rEventListener);
 
-        reader.Config.getDeviceStatus(true, true, false);
+        reader.Config.getDeviceStatus(true, false, false);
         Log.d("ConfigureReader", "Default ConfigureReader Finished" + reader.getHostName());
     }
 
@@ -918,7 +980,8 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
     }
 
     private void read() {
-        if (reader != null && reader.isConnected() && !isReadingBarcode) {
+        if (reader != null && reader.isConnected() && !isReadingBarcode && !isReading) {
+            isReading = true;
             try {
                 reader.Actions.Inventory.perform();
             } catch (InvalidUsageException | OperationFailureException e) {
@@ -928,9 +991,12 @@ public class ZebraRfd8500Module extends ReactContextBaseJavaModule implements Li
     }
 
     private void cancel() {
-        if (reader != null && reader.isConnected()) {
+        if (reader != null && reader.isConnected() && isReading) {
             try {
+                isReading = false;
+
                 reader.Actions.Inventory.stop();
+
             } catch (InvalidUsageException | OperationFailureException e) {
                 e.printStackTrace();
             }
